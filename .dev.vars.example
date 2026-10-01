@@ -1,0 +1,3 @@
+# Copy this file to .dev.vars for local development only.
+# Generate a unique value; never commit the real token.
+ADMIN_TOKEN=replace-with-a-long-random-token

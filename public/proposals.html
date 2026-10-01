@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decisions — trader.siv19.dev</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="paper-banner">⚠️ PAPER TRADING SIMULATION — no real money. All trades are simulated with virtual cash.</div>
+<nav class="topnav">
+  <a class="brand" href="/">trader<span>.siv19.dev</span></a>
+  <a class="nl" href="/">Dashboard</a>
+  <a class="nl" href="/chat">Agent Chat</a>
+  <a class="nl" href="/proposals">Decisions</a>
+  <a class="nl" href="/strategies">Strategies</a>
+  <a class="nl" href="/intelligence">Intelligence</a>
+  <a class="nl" href="/how-it-works">How it works</a>
+</nav>
+<main>
+  <h1>Decision Requests</h1>
+  <p class="muted">When the agents can't agree within their 2-minute discussion window, the proposal lands here. You pick the winning position: execute the trade, or don't. <b>Coming soon:</b> Jev / Laya decision models arbitrate here instead.</p>
+
+  <div class="card" id="adminbox">
+    <label>Admin token (needed to resolve — stored only in this browser)</label>
+    <input id="admintoken" type="password" placeholder="paste ADMIN_TOKEN">
+    <button class="ghost" style="margin-top:8px" onclick="saveToken()">Save token</button>
+    <span class="muted" id="tokenstate" style="font-size:13px;margin-left:8px"></span>
+  </div>
+
+  <div id="list"><div class="card muted">loading…</div></div>
+
+  <h2>Resolved</h2>
+  <div id="resolved"><div class="card muted">loading…</div></div>
+</main>
+<footer>trader.siv19.dev · paper trading only · no real money</footer>
+<script src="/js/app.js"></script>
+<script>
+function saveToken() {
+  const v = document.getElementById("admintoken").value.trim();
+  if (v) localStorage.setItem("tp_admin_token", v);
+  document.getElementById("tokenstate").textContent = v ? "saved ✓" : "";
+  document.getElementById("admintoken").value = "";
+}
+if (localStorage.getItem("tp_admin_token")) document.getElementById("tokenstate").textContent = "saved ✓";
+
+async function resolve(id, resolution) {
+  const note = prompt("Optional note for the log:") || "";
+  if (!confirm(`Resolve ${id} as "${resolution}"?`)) return;
+  try {
+    await api(`/api/decision-requests/${id}/resolve`, {
+      method: "POST", admin: true,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ resolution, note }),
+    });
+    load();
+  } catch(e) { alert("Resolve failed: " + e.message); }
+}
+
+function card(d) {
+  const p = d.payload?.proposal || {};
+  const votes = (d.payload?.votes || []).map(v =>
+    `<div class="msg" style="margin:6px 0"><div class="who">${esc(v.agent_name)} voted ${v.approve ? "✅ APPROVE" : "❌ REJECT"}</div><div>${esc(v.reason)}</div></div>`).join("");
+  const chat = (d.payload?.chat_excerpt || []).slice(-6).map(m =>
+    `<div class="muted" style="font-size:13px"><b>${esc(m.agent_name)}:</b> ${esc(m.body).slice(0,220)}</div>`).join("");
+  return `<div class="card">
+    <b>${esc(d.id)}</b> <span class="pill ${d.status === "OPEN" ? "open" : "resolved"}">${esc(d.status)}</span>
+    <div style="margin:8px 0"><span class="pill ${p.action === "BUY" ? "buy" : "sell"}">${esc(p.action || "")}</span>
+    <b>${esc(p.qty)} ${esc(p.symbol)}</b> @ ${esc(p.price)} <span class="muted">(${esc(p.portfolio || "")})</span></div>
+    <div>${esc(p.thesis_short || "")}</div>
+    <details class="thesis"><summary>detailed analysis</summary><pre class="dump">${esc(p.thesis_detail || "")}</pre>
+    <div class="muted" style="font-size:13px">quote source: ${esc(p.price_source || "")}${p.price_url ? ` · <a href="${esc(p.price_url)}" target="_blank" rel="noopener">verify ↗</a>` : ""}${p.invalidator ? `<br>invalidator: ${esc(p.invalidator)}` : ""}</div></details>
+    <h2 style="font-size:15px;border:none;margin:14px 0 6px">Agent positions</h2>${votes || '<div class="muted">no votes recorded</div>'}
+    <details class="thesis"><summary>recent chat context</summary>${chat || '<span class="muted">—</span>'}</details>
+    ${d.status === "OPEN" ? `
+    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+      <button onclick="resolve('${esc(d.id)}','execute')">Execute — proposer's position wins</button>
+      <button class="danger" onclick="resolve('${esc(d.id)}','reject')">Don't trade — dissenter wins</button>
+    </div>` : `
+    <div class="muted" style="margin-top:8px;font-size:13px">resolved: <b>${esc(d.resolution)}</b> · winner: ${esc(d.winner_agent_id || "—")} · by ${esc(d.resolved_by)}${d.note ? ` · “${esc(d.note)}”` : ""}</div>`}
+  </div>`;
+}
+
+async function load() {
+  try {
+    const { decision_requests } = await api("/api/decision-requests");
+    const open = decision_requests.filter(d => d.status === "OPEN");
+    const done = decision_requests.filter(d => d.status !== "OPEN");
+    document.getElementById("list").innerHTML = open.map(card).join("") || '<div class="card muted">nothing waiting — the agents agree (for now)</div>';
+    document.getElementById("resolved").innerHTML = done.map(card).join("") || '<div class="card muted">none yet</div>';
+  } catch(e) { document.getElementById("list").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
+}
+load(); setInterval(load, 15000);
+</script>
+</body>
+</html>

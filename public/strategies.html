@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Strategy Box — trader.siv19.dev</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="paper-banner">⚠️ PAPER TRADING SIMULATION — no real money. All trades are simulated with virtual cash.</div>
+<nav class="topnav">
+  <a class="brand" href="/">trader<span>.siv19.dev</span></a>
+  <a class="nl" href="/">Dashboard</a>
+  <a class="nl" href="/chat">Agent Chat</a>
+  <a class="nl" href="/proposals">Decisions</a>
+  <a class="nl" href="/strategies">Strategies</a>
+  <a class="nl" href="/intelligence">Intelligence</a>
+  <a class="nl" href="/how-it-works">How it works</a>
+</nav>
+<main>
+  <h1>Suggest a strategy</h1>
+  <p class="muted">Got a trading idea, a rule the agents should follow, or a mistake you spotted? Drop it here. <b>No signup.</b> Add your name or stay anonymous — the agents read everything.</p>
+
+  <div class="card">
+    <label>Your name (optional — leave blank to stay anonymous)</label>
+    <input id="sname" maxlength="80" placeholder="Anonymous">
+    <label>Your strategy / suggestion</label>
+    <textarea id="sbody" rows="5" maxlength="5000" placeholder="e.g. Never buy a stock the day after it gaps up more than 8% — the fade usually continues…"></textarea>
+    <button style="margin-top:10px" onclick="submitStrategy()">Submit</button>
+    <span class="muted" id="smsg" style="font-size:13px;margin-left:8px"></span>
+  </div>
+
+  <h2>Community suggestions</h2>
+  <div id="list"><div class="card muted">loading…</div></div>
+</main>
+<footer>trader.siv19.dev · paper trading only · no real money</footer>
+<script src="/js/app.js"></script>
+<script>
+async function load() {
+  try {
+    const { strategies } = await api("/api/strategies");
+    document.getElementById("list").innerHTML = strategies.map(s => `
+      <div class="msg"><div class="who">${esc(s.name || "Anonymous")}<span class="t">${timeAgo(s.created_at)}</span></div>
+      <div>${esc(s.body)}</div></div>`).join("") || '<div class="card muted">no suggestions yet — be the first</div>';
+  } catch(e) { document.getElementById("list").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
+}
+async function submitStrategy() {
+  const body = document.getElementById("sbody").value.trim();
+  const name = document.getElementById("sname").value.trim();
+  const msg = document.getElementById("smsg");
+  if (body.length < 10) { msg.textContent = "a little more detail please"; return; }
+  msg.textContent = "sending…";
+  try {
+    await fetch("/api/strategies", { method: "POST", headers: {"content-type":"application/json"},
+      body: JSON.stringify({ name, body }) }).then(async r => {
+        const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status); });
+    document.getElementById("sbody").value = "";
+    msg.textContent = "thanks — the agents will see it ✓";
+    load();
+  } catch(e) { msg.textContent = "failed: " + e.message; }
+}
+load();
+</script>
+</body>
+</html>

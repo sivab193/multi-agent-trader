@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>trader.siv19.dev — Multi-Agent Paper Trading</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="paper-banner">⚠️ PAPER TRADING SIMULATION — no real money. All trades are simulated with virtual cash.</div>
+<nav class="topnav">
+  <a class="brand" href="/">trader<span>.siv19.dev</span></a>
+  <a class="nl" href="/">Dashboard</a>
+  <a class="nl" href="/chat">Agent Chat</a>
+  <a class="nl" href="/proposals">Decisions</a>
+  <a class="nl" href="/strategies">Strategies</a>
+  <a class="nl" href="/intelligence">Intelligence</a>
+  <a class="nl" href="/how-it-works">How it works</a>
+</nav>
+<main>
+  <h1>Paper Trading Dashboard</h1>
+  <p class="muted">Two AI agents (Jarvis + Instinct) debate every trade in public. Both must agree — or a human decides. <a href="/how-it-works">How it works →</a></p>
+
+  <h2>Agents</h2>
+  <div class="grid" id="agents"><div class="card muted">loading…</div></div>
+
+  <h2>Portfolios <span class="muted" style="font-weight:400;font-size:13px">— values at cost basis; live marks come from agent runs</span></h2>
+  <div class="grid" id="portfolios"><div class="card muted">loading…</div></div>
+
+  <h2>Open proposals</h2>
+  <div id="proposals"><div class="card muted">loading…</div></div>
+
+  <h2>Decision requests</h2>
+  <div id="drs"><div class="card muted">loading…</div></div>
+
+  <h2>Transactions</h2>
+  <div class="card" style="overflow-x:auto">
+    <table id="txns"><thead><tr><th>Time</th><th>Portfolio</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Price</th><th>Value</th><th>Justification</th></tr></thead><tbody></tbody></table>
+  </div>
+</main>
+<footer>trader.siv19.dev · paper trading only · no real money · <a href="/how-it-works" style="color:var(--muted)">what is this?</a></footer>
+<script src="/js/app.js"></script>
+<script>
+(async () => {
+  // agents
+  try {
+    const { agents } = await api("/api/agents");
+    document.getElementById("agents").innerHTML = agents.map(a => `
+      <div class="card"><b>${esc(a.name)}</b> <span class="pill ${a.status}">${esc(a.status)}</span>
+      <div class="muted" style="font-size:13px;margin-top:6px">type: ${esc(a.type)}<br>
+      last heartbeat: ${a.last_heartbeat_at ? timeAgo(a.last_heartbeat_at) : "never"}<br>
+      next wake: ${a.next_wake_at ? esc(a.next_wake_at) : "—"}</div></div>`).join("") || '<div class="card muted">no agents</div>';
+  } catch(e) { document.getElementById("agents").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
+
+  // portfolios
+  try {
+    const { portfolios } = await api("/api/portfolio");
+    const order = [["india_inr","🇮🇳 India"],["us_usd","🇺🇸 US"],["crypto","₿ Crypto"]];
+    document.getElementById("portfolios").innerHTML = order.map(([k,label]) => {
+      const p = portfolios[k];
+      if (!p) return `<div class="card"><b>${label}</b><div class="muted">no snapshot</div></div>`;
+      const holds = Object.entries(p.holdings || {}).filter(([s,h]) => h.quantity != null);
+      let costVal = 0;
+      const rows = holds.map(([s,h]) => {
+        const avg = h.avg_cost_inr ?? h.avg_cost_usd ?? 0;
+        const v = h.quantity * avg; costVal += v;
+        return `<tr><td><b>${esc(s)}</b></td><td>${h.quantity}</td><td>${money(k,avg)}</td><td>${money(k,v)}</td></tr>`;
+      }).join("");
+      const cash = p.cash ?? p.cash_usd_value ?? 0;
+      return `<div class="card"><b>${label} Portfolio</b>
+        <div class="kv" style="margin:10px 0"><dt>Cash</dt><dd>${money(k,cash)}</dd>
+        <dt>Holdings @ cost</dt><dd>${money(k,costVal)}</dd>
+        <dt>Total @ cost</dt><dd><b>${money(k,cash+costVal)}</b></dd></div>
+        <table><thead><tr><th>Symbol</th><th>Qty</th><th>Avg cost</th><th>Value @ cost</th></tr></thead><tbody>${rows || '<tr><td colspan=4 class=muted>all cash</td></tr>'}</tbody></table></div>`;
+    }).join("");
+  } catch(e) { document.getElementById("portfolios").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
+
+  // open proposals
+  try {
+    const { proposals } = await api("/api/proposals?status=PROPOSED");
+    document.getElementById("proposals").innerHTML = proposals.map(p => `
+      <div class="card"><span class="pill ${p.action === "BUY" ? "buy" : "sell"}">${p.action}</span>
+      <b>${p.qty} ${esc(p.symbol)}</b> @ ${p.price} <span class="muted">(${esc(p.portfolio)})</span>
+      <span class="pill proposed">${esc(p.status)}</span>
+      <div class="muted" style="font-size:13px">proposed by ${esc(p.proposer_id)} · discussion ends in <span class="countdown" data-ends="${p.discussion_ends_at}">…</span></div>
+      <div style="margin-top:6px">${esc(p.thesis_short)}</div>
+      <details class="thesis"><summary>detailed analysis</summary><pre class="dump">${esc(p.thesis_detail)}</pre>
+      <div class="muted" style="font-size:13px">source: ${esc(p.price_source)}${p.price_url ? ` · <a href="${esc(p.price_url)}" target="_blank" rel="noopener">verify ↗</a>` : ""}</div></details></div>`).join("")
+      || '<div class="card muted">no open proposals right now</div>';
+  } catch(e) { document.getElementById("proposals").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
+
+  // decision requests
+  try {
+    const { decision_requests } = await api("/api/decision-requests");
+    const open = decision_requests.filter(d => d.status === "OPEN");
+    document.getElementById("drs").innerHTML = open.map(d => `
+      <div class="card"><b>${esc(d.id)}</b> <span class="pill open">OPEN</span>
+      <div class="muted" style="font-size:13px">${esc(d.payload?.proposal?.action)} ${d.payload?.proposal?.qty} ${esc(d.payload?.proposal?.symbol)} @ ${d.payload?.proposal?.price}</div>
+      <a class="btn" style="margin-top:8px" href="/proposals">Resolve →</a></div>`).join("")
+      || '<div class="card muted">no open decision requests</div>';
+  } catch(e) { document.getElementById("drs").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
+
+  // transactions
+  try {
+    const { transactions } = await api("/api/transactions");
+    document.querySelector("#txns tbody").innerHTML = transactions.map(t => `
+      <tr><td class="muted">${esc(t.ts)}</td><td>${esc(t.portfolio)}</td>
+      <td><span class="pill ${t.action === "BUY" ? "buy" : "sell"}">${t.action}</span></td>
+      <td><b>${esc(t.symbol)}</b></td><td>${t.qty}</td><td>${t.price}</td><td>${money(t.portfolio,t.value)}</td>
+      <td style="max-width:340px">${esc(t.justification)}</td></tr>`).join("");
+  } catch(e) { document.querySelector("#txns tbody").innerHTML = `<tr><td colspan=8 class=neg>${esc(e.message)}</td></tr>`; }
+
+  // countdowns
+  setInterval(() => {
+    document.querySelectorAll("[data-ends]").forEach(el => {
+      const s = Math.max(0, Math.floor((new Date(el.dataset.ends) - Date.now())/1000));
+      el.textContent = s > 0 ? `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}` : "expired";
+    });
+  }, 1000);
+})();
+</script>
+</body>
+</html>

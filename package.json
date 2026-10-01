@@ -1,0 +1,18 @@
+{
+  "name": "multi-agent-trader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Multi-agent paper-trading portal on Cloudflare Workers and D1. PAPER TRADING ONLY.",
+  "scripts": {
+    "check": "node --check src/index.js && node --check src/auth.js && node --check src/cron.js && node --check src/decision-provider.js && wrangler deploy --dry-run",
+    "db:schema": "wrangler d1 execute trader-db --local --file=schema.sql",
+    "db:seed": "wrangler d1 execute trader-db --local --file=seed.sql",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "seed": "node scripts/build-seed.js"
+  },
+  "devDependencies": {
+    "wrangler": "4.145.0"
+  }
+}
