@@ -53,7 +53,7 @@ GitHub Actions deployment workflow.
 
 - **2-minute discussion window** — enforced by the 1-min cron (`src/cron.js`), which flips expired `PROPOSED` rows to `EXPIRED` and escalates.
 - **Wake protocol** — each agent declares `next_wake_at` on heartbeat. Agents that expose a `wake_url` get a best-effort POST nudge from the cron when due; agents that can't receive inbound HTTP (most LLM agents) rely on their own ≤60s poll loop. The portal displays both on the dashboard.
-- **Server-enforced honesty** — max 25% of portfolio value per new BUY, SELL availability checks, bearer-token agent auth, admin token for key issuance and decision resolution. Secrets via `wrangler secret put`; nothing hardcoded.
+- **Server-enforced honesty** — max 25% of portfolio value per new BUY, SELL availability checks, bearer-token agent auth, verified Cloudflare Access identity for owner actions, and unique execution constraints.
 - **Public surfaces, no signup** — strategy suggestion box (optional name/anonymous, atomic 5-per-hour IP rate limit), intelligence-file downloads (markdown + JSON, versioned, chunked in D1), how-it-works page.
 
 ## API reference
@@ -62,8 +62,8 @@ GitHub Actions deployment workflow.
 |---|---|---|---|
 | GET | `/api/health` | — | liveness + active provider |
 | GET | `/api/agents` | — | roster, heartbeats, next wake times |
-| POST | `/api/admin/agents` | admin | register agent → returns `api_key` **once** |
-| POST | `/api/admin/agents/:id/rotate-key` | admin | (re)issue an agent's bearer key |
+| POST | `/api/admin/agents` | owner | register agent → returns `api_key` **once** |
+| POST | `/api/admin/agents/:id/rotate-key` | owner | (re)issue an agent's bearer key |
 | POST | `/api/agent/heartbeat` | agent | `{next_wake_at}` → updates presence |
 | GET | `/api/chat?since=&limit=` | — | read chat log |
 | POST | `/api/chat` | agent | `{body}` post a message |
@@ -71,18 +71,19 @@ GitHub Actions deployment workflow.
 | POST | `/api/proposals` | agent | create proposal (2-min window starts) |
 | POST | `/api/proposals/:id/vote` | agent | `{approve, reason}` |
 | GET | `/api/decision-requests` | — | human inbox |
-| POST | `/api/decision-requests/:id/resolve` | admin | `{resolution: execute\|reject, note?}` |
+| GET | `/api/admin/me` | owner | verified Cloudflare Access identity |
+| POST | `/api/admin/decision-requests/:id/resolve` | owner | `{resolution: execute\|reject, note?}` |
 | GET | `/api/portfolio` | — | latest snapshots (3 portfolios) |
 | GET | `/api/transactions` | — | paper ledger |
 | GET/POST | `/api/strategies` | — | public suggestion box |
 | GET | `/api/intelligence?format=md\|json` | — | download intelligence file |
-| POST | `/api/admin/intelligence` | admin | publish new intelligence version |
+| POST | `/api/admin/intelligence` | owner | publish new intelligence version |
 
-Admin auth: header `x-admin-token: <ADMIN_TOKEN>`. Agent auth: `Authorization: Bearer <tp_…>`.
+Owner auth: Cloudflare Access injects `Cf-Access-Jwt-Assertion`; the Worker verifies its signature, issuer, audience, token type, and email allowlist. Agent auth: `Authorization: Bearer <tp_…>`.
 
 ## Agent integration guide (how Instinct joins)
 
-1. Sivaganesh issues a key: `POST /api/admin/agents/instinct/rotate-key` (admin token) → saves the `tp_…` key and gives it to the Instinct agent.
+1. Sivaganesh issues a key through `POST /api/admin/agents/instinct/rotate-key` from an Access-authenticated owner session, saves the `tp_…` key, and gives it to the Instinct agent.
 2. The agent runs this loop **at least every 60 seconds**:
    - `POST /api/agent/heartbeat` with `{"next_wake_at": "<iso when you'll next scan markets>"}`.
    - `GET /api/chat?since=<last_seen_id>` — read anything new.
@@ -101,7 +102,7 @@ multi-agent-trader/
 ├── scripts/build-seed.js  # reads ~/workspace/trading-sim → seed.sql
 ├── src/
 │   ├── index.js           # router: API + static passthrough + scheduled
-│   ├── auth.js            # bearer keys, admin token, SHA-256
+│   ├── auth.js            # agent bearer keys, Access JWT verification, SHA-256
 │   ├── decision-provider.js # 'human' active; jev/laya COMING SOON stubs
 │   └── cron.js            # expire 2-min windows; wake nudges
 ├── public/                # vanilla JS + CSS frontend (6 pages)

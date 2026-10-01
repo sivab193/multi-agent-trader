@@ -1,11 +1,7 @@
 // Shared frontend helpers for trader.siv19.dev
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
-  const adminToken = localStorage.getItem("tp_admin_token");
-  if (adminToken && (opts.admin || path.includes("/admin/") || path.includes("/resolve"))) {
-    headers["x-admin-token"] = adminToken;
-  }
-  const res = await fetch(path, { ...opts, headers });
+  const res = await fetch(path, { ...opts, headers, credentials: "same-origin" });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;

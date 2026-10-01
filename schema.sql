@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS decision_requests (
   id              TEXT PRIMARY KEY,                -- e.g. 'dr_20261001_001'
   proposal_id     TEXT NOT NULL REFERENCES proposals(id),
   payload_json    TEXT NOT NULL,                   -- proposal + votes + chat excerpt snapshot
-  status          TEXT NOT NULL DEFAULT 'OPEN',    -- OPEN | RESOLVED
+  status          TEXT NOT NULL DEFAULT 'OPEN',    -- OPEN | RESOLVING | RESOLVED
   resolution      TEXT,                            -- 'execute' | 'reject'
   winner_agent_id TEXT REFERENCES agents(id),      -- whose position won
   decided_by      TEXT NOT NULL DEFAULT 'human',   -- 'human' today; 'jev'/'laya' COMING SOON
@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS decision_requests (
   resolved_at     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_dr_status ON decision_requests(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dr_proposal_unique ON decision_requests(proposal_id);
 
 -- Paper-trade ledger (mirror of the original all_transactions.csv).
 CREATE TABLE IF NOT EXISTS transactions (
@@ -95,6 +96,19 @@ CREATE TABLE IF NOT EXISTS transactions (
   proposal_id    TEXT REFERENCES proposals(id)
 );
 CREATE INDEX IF NOT EXISTS idx_txn_ts ON transactions(ts);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_txn_proposal_unique ON transactions(proposal_id);
+
+-- Immutable audit trail for every privileged human action.
+CREATE TABLE IF NOT EXISTS admin_audit (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor_email   TEXT NOT NULL,
+  actor_subject TEXT,
+  action        TEXT NOT NULL,
+  target        TEXT,
+  detail_json   TEXT NOT NULL DEFAULT '{}',
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit(created_at);
 
 -- Portfolio state snapshots (JSON). A new row is appended on every executed trade.
 CREATE TABLE IF NOT EXISTS portfolio_snapshots (

@@ -64,12 +64,17 @@ export const providers = {
       requireHuman();
       const id = newId("dr");
       const now = new Date().toISOString();
-      await env.DB.prepare(
+      const inserted = await env.DB.prepare(
         `INSERT INTO decision_requests
            (id, proposal_id, payload_json, status, decided_by, created_at)
-         VALUES (?, ?, ?, 'OPEN', 'human', ?)`
-      ).bind(id, state.proposal.id, JSON.stringify(state), now).run();
-      return { choice: "deferred", provider: "human", decision_request_id: id };
+         VALUES (?, ?, ?, 'OPEN', 'human', ?)
+         ON CONFLICT(proposal_id) DO NOTHING
+         RETURNING id`
+      ).bind(id, state.proposal.id, JSON.stringify(state), now).first();
+      const decisionId = inserted?.id || (await env.DB.prepare(
+        "SELECT id FROM decision_requests WHERE proposal_id = ?"
+      ).bind(state.proposal.id).first())?.id;
+      return { choice: "deferred", provider: "human", decision_request_id: decisionId };
     },
   },
 

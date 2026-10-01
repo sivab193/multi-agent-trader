@@ -10,6 +10,7 @@ Single Worker + D1 + static assets. One command to deploy once prerequisites are
    - `Workers Scripts:Edit`, `Workers Routes:Edit`, `D1:Edit`, `Account Settings:Read`, `Zone:Read` / `DNS:Edit` (for `siv19.dev`)
    
    Hand it over through the normal secure channel — **never paste it in chat**. On the deploy machine: `npx wrangler login` (browser OAuth, preferred) or `export CLOUDFLARE_API_TOKEN=…` for one shot.
+4. **Cloudflare Access owner application** — create one self-hosted Access application containing both `trader.siv19.dev/proposals` and `trader.siv19.dev/api/admin/*`. Add an Allow policy containing only the owner's verified email. Copy the team domain and Application Audience (AUD) tag. The Worker validates the JWT independently, so an Access dashboard policy alone is not sufficient.
 
 ## Deploy steps
 
@@ -28,22 +29,26 @@ npm run seed
 npx wrangler d1 execute trader-db --remote --file=schema.sql
 npx wrangler d1 execute trader-db --remote --file=seed.sql
 
-# 4. Set the admin secret (used for agent registration + resolving decision requests)
-npx wrangler secret put ADMIN_TOKEN
-# → paste a long random token when prompted. Sivaganesh pastes this same token
-#    once in the browser on /proposals (stored in localStorage only).
+# 4. Configure the Access identity verifier. These are stored as encrypted
+# Worker configuration so the owner email is not published in the repository.
+npx wrangler secret put ACCESS_TEAM_DOMAIN
+# → e.g. your-team.cloudflareaccess.com
+npx wrangler secret put ACCESS_AUD
+# → the Access application's Audience tag
+npx wrangler secret put OWNER_EMAILS
+# → comma-separated verified owner emails
 
 # 5. Validate and deploy. The custom domain in wrangler.jsonc is created when
 #    siv19.dev is active in this Cloudflare account.
 npm run check
 npx wrangler deploy
-# → you get a workers.dev URL plus https://trader.siv19.dev
+# → https://trader.siv19.dev (workers.dev and preview URLs are disabled)
 
 # 6. Issue agent keys (run once per agent)
 npx wrangler d1 execute trader-db --remote --command="SELECT id, name, status FROM agents;"
-# For each LLM agent, create a key via the API (replace ADMIN_TOKEN):
-curl -X POST https://trader.siv19.dev/api/admin/agents/jarvis/rotate-key \
-  -H "x-admin-token: $ADMIN_TOKEN"
+# For each LLM agent, call the rotate endpoint from an Access-authenticated
+# owner client. Cloudflare injects Cf-Access-Jwt-Assertion and the Worker verifies it:
+# POST https://trader.siv19.dev/api/admin/agents/jarvis/rotate-key
 # → {"api_key":"tp_…"} — SAVE IT NOW, it can't be retrieved again.
 # Do the same for /api/admin/agents/instinct/rotate-key
 ```
@@ -76,8 +81,16 @@ Configure the repository's `production` environment with these Actions secrets:
 - `CLOUDFLARE_API_TOKEN` — the scoped token described above.
 - `CLOUDFLARE_ACCOUNT_ID` — shown by `npx wrangler whoami` after login.
 
-Set the Worker secret separately with `npx wrangler secret put ADMIN_TOKEN`;
-do not put the admin token in GitHub unless a workflow actually needs it.
+Set `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, and `OWNER_EMAILS` directly on the
+Worker as shown above. No shared browser admin token exists.
+
+## Owner-auth smoke test
+
+1. Open `https://trader.siv19.dev/proposals` in a private browser window.
+2. Verify Cloudflare Access requires login and rejects any email not in the Allow policy.
+3. After login, verify the page shows the authenticated email returned by `/api/admin/me`.
+4. Resolve a test decision and confirm `admin_audit` records the same email and Access subject.
+5. Confirm a direct request without `Cf-Access-Jwt-Assertion` returns `401`, even if it reaches the Worker.
 
 ## What's NOT here (by design)
 

@@ -21,6 +21,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm test
       - run: npm run check
       - name: Apply D1 schema
         run: npx wrangler d1 execute trader-db --remote --file=schema.sql

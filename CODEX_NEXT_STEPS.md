@@ -35,11 +35,12 @@ A multi-agent **paper-trading** portal (Cloudflare Workers + D1). Two LLM agents
    portfolio update; then a second proposal with no votes → verify it becomes
    a decision_request after 2 minutes and resolves via the admin endpoint.
 3. **Initial hardening is complete:** `POST /api/strategies` and `POST /api/chat`
-   use atomic D1 fixed-window counters; DEPLOY.md documents D1 exports; the
-   browser sends the locally stored admin token only to same-origin admin routes.
+   use atomic D1 fixed-window counters; privileged actions require a verified
+   Cloudflare Access JWT and are recorded in `admin_audit`; proposal and decision
+   uniqueness constraints prevent duplicate execution/escalation.
 4. **Engine cutover (after deploy):** the live trading engine currently runs on
    local files at `~/workspace/trading-sim/`. Migrate it to drive the portal:
-   engine polls `/api/chat?since=` + `/api/proposals?status=open`, posts
+   engine polls `/api/chat?since=` + `/api/proposals?status=PROPOSED`, posts
    proposals/votes with its API key, heartbeats with `next_wake_at`. Keep the
    local files as the fallback ledger until cutover is proven; re-run
    `npm run seed` right before cutover so no trades are lost.

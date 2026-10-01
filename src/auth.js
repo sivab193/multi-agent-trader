@@ -1,5 +1,8 @@
-// Auth helpers: agent bearer tokens + human admin token.
-// Secrets are NEVER hardcoded — ADMIN_TOKEN comes from `wrangler secret put`.
+// Auth helpers: per-agent bearer tokens + Cloudflare Access owner identity.
+
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
+const accessJwks = new Map();
 
 export async function sha256Hex(s) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -25,17 +28,42 @@ export async function agentFromRequest(env, request) {
   return row || null;
 }
 
-// Admin actions (register agent, resolve decision request) need the human token:
-// header `x-admin-token: <ADMIN_TOKEN>`.
-export async function isAdmin(request, env) {
-  const token = request.headers.get("x-admin-token") || "";
-  if (!env.ADMIN_TOKEN) return false;
-  const encoder = new TextEncoder();
-  const [providedHash, expectedHash] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(token)),
-    crypto.subtle.digest("SHA-256", encoder.encode(env.ADMIN_TOKEN)),
-  ]);
-  return crypto.subtle.timingSafeEqual(providedHash, expectedHash);
+function accessConfig(env) {
+  const team = (env.ACCESS_TEAM_DOMAIN || "").trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const audience = (env.ACCESS_AUD || "").trim();
+  const owners = new Set(
+    (env.OWNER_EMAILS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean)
+  );
+  return { team, audience, owners };
+}
+
+// Returns a verified owner identity, or null. This deliberately fails closed:
+// production owner actions do not fall back to a shared browser/localStorage token.
+export async function verifyOwnerJwt(token, env, jwksOverride = null) {
+  const { team, audience, owners } = accessConfig(env);
+  if (!team || !audience || owners.size === 0) return null;
+  if (!token) return null;
+
+  try {
+    let jwks = jwksOverride || accessJwks.get(team);
+    if (!jwks) {
+      jwks = createRemoteJWKSet(new URL(`https://${team}/cdn-cgi/access/certs`));
+      accessJwks.set(team, jwks);
+    }
+    const { payload } = await jwtVerify(token, jwks, {
+      issuer: `https://${team}`,
+      audience,
+    });
+    const email = String(payload.email || "").toLowerCase();
+    if (!email || !owners.has(email) || payload.type !== "app") return null;
+    return { email, subject: String(payload.sub || ""), issuer: String(payload.iss || "") };
+  } catch {
+    return null;
+  }
+}
+
+export async function ownerFromRequest(request, env) {
+  return verifyOwnerJwt(request.headers.get("Cf-Access-Jwt-Assertion") || "", env);
 }
 
 export function clientIpHash(request) {

@@ -23,8 +23,9 @@ async function expireDiscussions(env, now) {
   const provider = activeProvider();
   let escalated = 0;
   for (const p of expired.results) {
-    await env.DB.prepare("UPDATE proposals SET status = 'EXPIRED' WHERE id = ? AND status = 'PROPOSED'")
+    const claimed = await env.DB.prepare("UPDATE proposals SET status = 'EXPIRED' WHERE id = ? AND status = 'PROPOSED'")
       .bind(p.id).run();
+    if (!claimed.meta?.changes) continue;
     const state = await buildArbitrationState(env, p);
     const res = await provider.arbitrate(env, state);
     await systemChat(

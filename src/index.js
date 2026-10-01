@@ -1,7 +1,7 @@
 // trader.siv19.dev — single Worker: REST API + cron + static asset passthrough.
 // PAPER TRADING ONLY. No broker, order-routing, or real-money code exists here.
 
-import { agentFromRequest, isAdmin, newApiKey, sha256Hex, clientIpHash } from "./auth.js";
+import { agentFromRequest, ownerFromRequest, newApiKey, sha256Hex, clientIpHash } from "./auth.js";
 import { activeProvider, buildArbitrationState } from "./decision-provider.js";
 import { runScheduled } from "./cron.js";
 
@@ -15,6 +15,17 @@ const json = (data, status = 200, headers = {}) =>
   });
 const err = (status, message) => json({ ok: false, error: message }, status);
 const nowIso = () => new Date().toISOString();
+
+async function requireOwner(request, env) {
+  return ownerFromRequest(request, env);
+}
+
+function auditOwnerStatement(env, owner, action, target, detail = {}) {
+  return env.DB.prepare(
+    `INSERT INTO admin_audit (actor_email, actor_subject, action, target, detail_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(owner.email, owner.subject || null, action, target || null, JSON.stringify(detail), nowIso());
+}
 
 function newId(prefix) {
   const d = new Date();
@@ -76,7 +87,7 @@ function applyTrade(snap, { action, symbol, qty, price }) {
   return next;
 }
 
-async function executeProposal(env, proposal, decidedBy, winnerAgentId) {
+async function executeProposal(env, proposal, decidedBy, winnerAgentId, extraStatements = []) {
   const snap = await latestSnapshot(env, proposal.portfolio);
   if (!snap) throw new Error(`no snapshot for portfolio ${proposal.portfolio}`);
   const next = applyTrade(snap, proposal);
@@ -99,6 +110,8 @@ async function executeProposal(env, proposal, decidedBy, winnerAgentId) {
     env.DB.prepare(
       "INSERT INTO portfolio_snapshots (portfolio, snapshot_json, created_at) VALUES (?, ?, ?)"
     ).bind(proposal.portfolio, JSON.stringify(next), now),
+    env.DB.prepare("UPDATE proposals SET status = 'APPROVED' WHERE id = ?").bind(proposal.id),
+    ...extraStatements,
   ]);
 
   await env.DB.prepare(
@@ -236,7 +249,6 @@ async function handlePropose(env, agent, body) {
   // Single-agent fast path: if this is the only active agent, consensus is trivially met.
   const needed = await activeAgentCount(env);
   if (needed <= 1) {
-    await env.DB.prepare("UPDATE proposals SET status = 'APPROVED' WHERE id = ?").bind(id).run();
     const exec = await executeProposal(env, { ...body, id, action, symbol, qty, price, portfolio,
       price_source: body.price_source, price_url: body.price_url, thesis_short }, "consensus");
     return json({ ok: true, id, status: "APPROVED", executed: exec.txnId, note: "sole active agent" });
@@ -288,9 +300,15 @@ async function handleVote(env, agent, proposalId, body) {
   ).bind(p.id).first();
   const needed = await activeAgentCount(env);
   if (Number(approvals.n) >= needed) {
-    await env.DB.prepare("UPDATE proposals SET status = 'APPROVED' WHERE id = ?").bind(p.id).run();
-    const exec = await executeProposal(env, p, "consensus");
-    return json({ ok: true, status: "APPROVED", executed: exec.txnId });
+    try {
+      const exec = await executeProposal(env, p, "consensus");
+      return json({ ok: true, status: "APPROVED", executed: exec.txnId });
+    } catch (e) {
+      if (String(e?.message || e).toLowerCase().includes("unique")) {
+        return err(409, "proposal was already executed");
+      }
+      throw e;
+    }
   }
   return json({ ok: true, status: "PROPOSED", approvals: Number(approvals.n), approvals_needed: needed });
 }
@@ -306,44 +324,70 @@ async function handleDecisionRequests(env) {
   })) });
 }
 
-async function handleResolve(env, drId, body) {
+async function handleResolve(env, owner, drId, body) {
   const dr = await env.DB.prepare("SELECT * FROM decision_requests WHERE id = ?").bind(drId).first();
   if (!dr) return err(404, "decision request not found");
   if (dr.status !== "OPEN") return err(409, "already resolved");
   const resolution = (body?.resolution || "").toLowerCase(); // 'execute' | 'reject'
   if (!["execute", "reject"].includes(resolution)) return err(400, "resolution must be 'execute' or 'reject'");
 
+  const claim = await env.DB.prepare(
+    "UPDATE decision_requests SET status = 'RESOLVING' WHERE id = ? AND status = 'OPEN'"
+  ).bind(drId).run();
+  if (!claim.meta?.changes) return err(409, "already resolved or being resolved");
+
   const payload = JSON.parse(dr.payload_json);
   const proposal = payload.proposal;
   const now = nowIso();
   let txnId = null, winnerAgentId = null;
+  const note = (body?.note || "").toString().slice(0, 2000);
 
   if (resolution === "execute") {
-    if (proposal.status === "APPROVED") return err(409, "proposal already executed");
-    const exec = await executeProposal(env, proposal, "human");
-    txnId = exec.txnId;
     winnerAgentId = proposal.proposer_id;
-    await env.DB.prepare("UPDATE proposals SET status = 'APPROVED' WHERE id = ?").bind(proposal.id).run();
+    const finish = env.DB.prepare(
+      `UPDATE decision_requests SET status = 'RESOLVED', resolution = 'execute',
+       winner_agent_id = ?, note = ?, decided_by = ?, resolved_at = ?
+       WHERE id = ? AND status = 'RESOLVING'`
+    ).bind(winnerAgentId, note, `human:${owner.email}`, now, drId);
+    let exec;
+    try {
+      exec = await executeProposal(env, proposal, `human:${owner.email}`, winnerAgentId, [
+        finish,
+        auditOwnerStatement(env, owner, "decision.resolve", drId, { resolution, proposal_id: proposal.id }),
+      ]);
+    } catch (e) {
+      await env.DB.prepare("UPDATE decision_requests SET status = 'OPEN' WHERE id = ? AND status = 'RESOLVING'")
+        .bind(drId).run();
+      if (String(e?.message || e).toLowerCase().includes("unique")) return err(409, "proposal was already executed");
+      throw e;
+    }
+    txnId = exec.txnId;
   } else {
     // 'reject' = the dissenting position wins: no trade.
     const rejecters = (payload.votes || []).filter((v) => !v.approve);
     winnerAgentId = rejecters.length ? rejecters[0].agent_id : null;
-    await env.DB.prepare(
-      "INSERT INTO chat_messages (agent_id, body, created_at) VALUES (NULL, ?, ?)"
-    ).bind(`❌ Decision request ${drId} resolved: proposal ${proposal.id} will NOT execute (human chose the dissenting position).`, now).run();
+    try {
+      await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE decision_requests SET status = 'RESOLVED', resolution = 'reject',
+           winner_agent_id = ?, note = ?, decided_by = ?, resolved_at = ?
+           WHERE id = ? AND status = 'RESOLVING'`
+        ).bind(winnerAgentId, note, `human:${owner.email}`, now, drId),
+        env.DB.prepare("INSERT INTO chat_messages (agent_id, body, created_at) VALUES (NULL, ?, ?)")
+          .bind(`❌ Decision request ${drId} resolved: proposal ${proposal.id} will NOT execute (human chose the dissenting position).`, now),
+        auditOwnerStatement(env, owner, "decision.resolve", drId, { resolution, proposal_id: proposal.id }),
+      ]);
+    } catch (e) {
+      await env.DB.prepare("UPDATE decision_requests SET status = 'OPEN' WHERE id = ? AND status = 'RESOLVING'")
+        .bind(drId).run();
+      throw e;
+    }
   }
-
-  await env.DB.prepare(
-    `UPDATE decision_requests
-     SET status = 'RESOLVED', resolution = ?, winner_agent_id = ?,
-         note = ?, decided_by = 'human', resolved_at = ?
-     WHERE id = ?`
-  ).bind(resolution, winnerAgentId, (body?.note || "").toString().slice(0, 2000), now, drId).run();
 
   return json({ ok: true, id: drId, resolution, txn_id: txnId, winner_agent_id: winnerAgentId });
 }
 
-async function handleRegisterAgent(env, body) {
+async function handleRegisterAgent(env, owner, body) {
   const name = (body?.name || "").toString().trim().slice(0, 60);
   const type = (body?.type || "llm").toString();
   if (!name) return err(400, "name is required");
@@ -353,10 +397,13 @@ async function handleRegisterAgent(env, body) {
   const hash = await sha256Hex(apiKey);
   const now = nowIso();
   try {
-    await env.DB.prepare(
+    await env.DB.batch([
+      env.DB.prepare(
       `INSERT INTO agents (id, name, type, api_key_hash, wake_url, status, created_at)
        VALUES (?, ?, ?, ?, ?, 'pending', ?)`
-    ).bind(id, name, type, hash, (body?.wake_url || null), now).run();
+      ).bind(id, name, type, hash, (body?.wake_url || null), now),
+      auditOwnerStatement(env, owner, "agent.register", id, { name, type }),
+    ]);
   } catch {
     return err(409, "agent name/id already registered");
   }
@@ -473,28 +520,39 @@ export default {
       );
     }
 
-    // ---- admin (human token) ----
+    // ---- owner (verified Cloudflare Access identity) ----
+    if (path === "/api/admin/me" && request.method === "GET") {
+      const owner = await requireOwner(request, env);
+      if (!owner) return err(401, "verified owner identity required");
+      return json({ ok: true, owner: { email: owner.email, subject: owner.subject } });
+    }
     if (path === "/api/admin/agents" && request.method === "POST") {
-      if (!(await isAdmin(request, env))) return err(401, "admin token required");
-      return handleRegisterAgent(env, await readJson(request));
+      const owner = await requireOwner(request, env);
+      if (!owner) return err(401, "verified owner identity required");
+      return handleRegisterAgent(env, owner, await readJson(request));
     }
     {
       // Issue (or rotate) the bearer key for an already-seeded agent.
       const m = path.match(/^\/api\/admin\/agents\/([A-Za-z0-9_-]+)\/rotate-key$/);
       if (m && request.method === "POST") {
-        if (!(await isAdmin(request, env))) return err(401, "admin token required");
+        const owner = await requireOwner(request, env);
+        if (!owner) return err(401, "verified owner identity required");
         const agent = await env.DB.prepare("SELECT * FROM agents WHERE id = ?").bind(m[1]).first();
         if (!agent) return err(404, "agent not found");
         const apiKey = newApiKey();
-        await env.DB.prepare("UPDATE agents SET api_key_hash = ? WHERE id = ?")
-          .bind(await sha256Hex(apiKey), m[1]).run();
+        await env.DB.batch([
+          env.DB.prepare("UPDATE agents SET api_key_hash = ? WHERE id = ?")
+            .bind(await sha256Hex(apiKey), m[1]),
+          auditOwnerStatement(env, owner, "agent.rotate_key", m[1]),
+        ]);
         return json({ ok: true, id: m[1], api_key: apiKey, warning: "Save this key now — it cannot be retrieved again." });
       }
     }
     // Publish a new intelligence version (admin). Body: { markdown, note? }.
     // The server chunks it for D1; clients download the reassembled file.
     if (path === "/api/admin/intelligence" && request.method === "POST") {
-      if (!(await isAdmin(request, env))) return err(401, "admin token required");
+      const owner = await requireOwner(request, env);
+      if (!owner) return err(401, "verified owner identity required");
       const body = await readJson(request);
       const markdown = (body?.markdown || "").toString();
       if (markdown.length < 10) return err(400, "markdown is required");
@@ -519,14 +577,16 @@ export default {
             .bind(version, seq++, markdown.slice(i, i + CHUNK))
         );
       }
+      batch.push(auditOwnerStatement(env, owner, "intelligence.publish", String(version), { chunks: seq }));
       await env.DB.batch(batch);
       return json({ ok: true, version, chunks: seq });
     }
     {
-      const m = path.match(/^\/api\/decision-requests\/([A-Za-z0-9_-]+)\/resolve$/);
+      const m = path.match(/^\/api\/admin\/decision-requests\/([A-Za-z0-9_-]+)\/resolve$/);
       if (m && request.method === "POST") {
-        if (!(await isAdmin(request, env))) return err(401, "admin token required");
-        return handleResolve(env, m[1], await readJson(request));
+        const owner = await requireOwner(request, env);
+        if (!owner) return err(401, "verified owner identity required");
+        return handleResolve(env, owner, m[1], await readJson(request));
       }
     }
 

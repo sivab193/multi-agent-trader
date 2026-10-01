@@ -20,4 +20,5 @@ jobs:
       - run: npm ci
       - run: npm run db:schema
       - run: npm run db:seed
+      - run: npm test
       - run: npm run check

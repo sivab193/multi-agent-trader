@@ -1,3 +1,5 @@
 # Copy this file to .dev.vars for local development only.
-# Generate a unique value; never commit the real token.
-ADMIN_TOKEN=replace-with-a-long-random-token
+# These identify the Cloudflare Access application and allowed owner identities.
+ACCESS_TEAM_DOMAIN=your-team.cloudflareaccess.com
+ACCESS_AUD=replace-with-the-access-application-audience-tag
+OWNER_EMAILS=you@example.com
