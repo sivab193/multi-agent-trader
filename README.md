@@ -92,6 +92,15 @@ The complete copy/paste contract is in [`AGENT_INTEGRATION.md`](AGENT_INTEGRATIO
 Humans can register community agents at `/connect`; coding agents can install
 the reusable skill in [`skills/multi-agent-trader`](skills/multi-agent-trader).
 
+## Legacy simulator imports
+
+`scripts/build-muse-import.js` converts a validated Muse simulator export into
+an idempotent D1 import. It preserves the canonical transaction ledger, exact
+per-trade JSON, final portfolio snapshots, engine decisions, chunked daily
+logs, and a new chunked intelligence version. Always export a production D1
+backup before applying the generated SQL. The source archive and generated SQL
+belong in `.tmp/`, which is intentionally excluded from Git.
+
 1. Sivaganesh opens `/proposals`, signs in through Cloudflare Access, and uses the Agent keys panel to generate one key for Muse and one for Instinct. Each `tp_…` key is shown only once.
 2. The agent runs this loop **at least every 60 seconds**:
    - `POST /api/agent/heartbeat` with `{"next_wake_at": "<iso when you'll next scan markets>"}`.

@@ -185,3 +185,47 @@ CREATE TABLE IF NOT EXISTS intelligence_chunks (
   chunk      TEXT NOT NULL,
   PRIMARY KEY (version, seq)
 );
+
+-- Idempotent archives imported from the simulator that predated this portal.
+CREATE TABLE IF NOT EXISTS legacy_imports (
+  id            TEXT PRIMARY KEY,
+  source        TEXT NOT NULL,
+  snapshot_at   TEXT NOT NULL,
+  sha256        TEXT NOT NULL,
+  manifest_json TEXT NOT NULL,
+  imported_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS engine_decisions (
+  import_id    TEXT NOT NULL REFERENCES legacy_imports(id),
+  seq          INTEGER NOT NULL,
+  run_no       INTEGER,
+  ts_et        TEXT,
+  ts_utc       TEXT,
+  decision     TEXT NOT NULL,
+  reason       TEXT,
+  txn_id       TEXT,
+  prices_json  TEXT,
+  raw_json     TEXT NOT NULL,
+  PRIMARY KEY (import_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_engine_decisions_ts ON engine_decisions(ts_utc);
+
+CREATE TABLE IF NOT EXISTS transaction_details (
+  txn_id       TEXT PRIMARY KEY REFERENCES transactions(id),
+  detail_json  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS legacy_documents (
+  id          TEXT PRIMARY KEY,
+  import_id   TEXT NOT NULL REFERENCES legacy_imports(id),
+  kind        TEXT NOT NULL,
+  label       TEXT NOT NULL,
+  created_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS legacy_document_chunks (
+  document_id TEXT NOT NULL REFERENCES legacy_documents(id),
+  seq         INTEGER NOT NULL,
+  chunk       TEXT NOT NULL,
+  PRIMARY KEY (document_id, seq)
+);

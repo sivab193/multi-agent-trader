@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 .wrangler
+.tmp
 node_modules
 *.log
 .DS_Store
