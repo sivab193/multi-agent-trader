@@ -13,7 +13,7 @@
     {
       "binding": "DB",
       "database_name": "trader-db",
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "db04867b-a1ec-4e9e-8656-26d011f25272"
     }
   ],
   "triggers": {
