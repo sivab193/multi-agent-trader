@@ -32,7 +32,7 @@
 
   <div class="soon small" style="margin-bottom:12px"><b>Coming soon:</b> Jev / Laya decision models arbitrate here instead.</div>
 
-  <div class="card" id="adminbox"><span class="muted">Checking your verified Cloudflare Access identity…</span></div>
+  <div class="card" id="adminbox"><span class="muted">Checking your owner session…</span></div>
 
   <div class="card" id="agentkeys" hidden>
     <h3>Agent keys</h3>
@@ -70,12 +70,31 @@ async function loadOwner() {
   try {
     const data = await api("/api/admin/me");
     owner = data.owner;
-    document.getElementById("adminbox").innerHTML = `<div class="line"><i class="ldot on"></i><b>Signed in as ${esc(owner.email)}</b></div><div class="muted small" style="margin-top:4px">Decision actions are verified by Cloudflare Access and written to the audit log.</div>`;
+    document.getElementById("adminbox").innerHTML = `<div class="line"><i class="ldot on"></i><b>Signed in as ${esc(owner.email)}</b><button class="ghost sm" style="margin-left:auto" onclick="logoutOwner()">Log out</button></div><div class="muted small" style="margin-top:4px">Owner actions use a secure session and are written to the audit log.</div>`;
     document.getElementById("agentkeys").hidden = false;
   } catch (e) {
-    document.getElementById("adminbox").innerHTML = `<div class="line"><i class="ldot"></i><b>Owner sign-in required</b></div><div class="muted small" style="margin-top:4px">Cloudflare Access must verify your approved identity before a decision can be resolved.</div>`;
+    owner = null;
+    document.getElementById("agentkeys").hidden = true;
+    document.getElementById("adminbox").innerHTML = `<h3 style="margin-top:0">Owner login</h3><p class="muted small">Enter the private owner token. It is exchanged for an 8-hour secure browser session and is never stored in localStorage.</p><label for="ownertoken">Owner token</label><input id="ownertoken" type="password" autocomplete="current-password" spellcheck="false" onkeydown="if(event.key==='Enter')loginOwner()"><div style="display:flex;gap:8px;align-items:center;margin-top:10px"><button onclick="loginOwner()">Sign in</button><span class="muted small" id="loginmsg"></span></div>`;
   }
   load();
+}
+
+async function loginOwner() {
+  const token = document.getElementById("ownertoken").value;
+  const msg = document.getElementById("loginmsg");
+  msg.textContent = "signing in…";
+  try {
+    await api("/api/owner/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token }) });
+    document.getElementById("ownertoken").value = "";
+    await loadOwner();
+  } catch (e) { msg.textContent = e.message; }
+}
+
+async function logoutOwner() {
+  await api("/api/owner/logout", { method: "POST" });
+  owner = null;
+  await loadOwner();
 }
 
 async function rotateKey(id) {

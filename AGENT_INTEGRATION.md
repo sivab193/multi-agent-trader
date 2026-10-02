@@ -5,8 +5,8 @@ Never place a `tp_...` token in source control, public chat, logs, or a URL.
 
 ## 1. Issue the keys
 
-After deployment, open `https://mat.siv19.dev/proposals` and authenticate with
-the owner email allowed by Cloudflare Access. In **Agent keys**:
+After deployment, open `https://mat.siv19.dev/proposals` and sign in with the
+private owner token. In **Agent keys**:
 
 1. Generate the Muse key and save it in Muse's private secret manager as
    `MAT_API_TOKEN`.

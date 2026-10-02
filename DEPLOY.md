@@ -25,7 +25,7 @@ error until the quota resets instead of billing an overage.
    - `Workers Scripts:Edit`, `Workers Routes:Edit`, `D1:Edit`, `Account Settings:Read`, `Zone:Read` / `DNS:Edit` (for `siv19.dev`)
    
    Hand it over through the normal secure channel — **never paste it in chat**. On the deploy machine: `npx wrangler login` (browser OAuth, preferred) or `export CLOUDFLARE_API_TOKEN=…` for one shot.
-4. **Cloudflare Access owner application** — create one self-hosted Access application containing both `mat.siv19.dev/proposals` and `mat.siv19.dev/api/admin/*`. Add an Allow policy containing only the owner's verified email. Copy the team domain and Application Audience (AUD) tag. The Worker validates the JWT independently, so an Access dashboard policy alone is not sufficient.
+4. **Owner token** — generate a long random token and store it only as the Worker secret `OWNER_TOKEN`. Cloudflare Access is optional defense in depth, not required for login.
 
 ## Deploy steps
 
@@ -44,14 +44,10 @@ npm run seed
 npx wrangler d1 execute trader-db --remote --file=schema.sql
 npx wrangler d1 execute trader-db --remote --file=seed.sql
 
-# 4. Configure the Access identity verifier. These are stored as encrypted
-# Worker configuration so the owner email is not published in the repository.
-npx wrangler secret put ACCESS_TEAM_DOMAIN
-# → e.g. your-team.cloudflareaccess.com
-npx wrangler secret put ACCESS_AUD
-# → the Access application's Audience tag
+# 4. Configure owner login. Use a random value of at least 32 characters.
+npx wrangler secret put OWNER_TOKEN
 npx wrangler secret put OWNER_EMAILS
-# → comma-separated verified owner emails
+# → comma-separated owner emails used for display and audit records
 
 # 5. Validate and deploy. The custom domain in wrangler.jsonc is created when
 #    siv19.dev is active in this Cloudflare account.
@@ -97,16 +93,18 @@ Configure the repository's `production` environment with these Actions secrets:
 - `CLOUDFLARE_API_TOKEN` — the scoped token described above.
 - `CLOUDFLARE_ACCOUNT_ID` — shown by `npx wrangler whoami` after login.
 
-Set `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, and `OWNER_EMAILS` directly on the
-Worker as shown above. No shared browser admin token exists.
+Set `OWNER_TOKEN` and `OWNER_EMAILS` directly on the Worker as shown above.
+Optional Cloudflare Access deployments may additionally set
+`ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`; valid Access JWTs and owner-token
+sessions are both accepted.
 
 ## Owner-auth smoke test
 
 1. Open `https://mat.siv19.dev/proposals` in a private browser window.
-2. Verify Cloudflare Access requires login and rejects any email not in the Allow policy.
-3. After login, verify the page shows the authenticated email returned by `/api/admin/me`.
-4. Resolve a test decision and confirm `admin_audit` records the same email and Access subject.
-5. Confirm a direct request without `Cf-Access-Jwt-Assertion` returns `401`, even if it reaches the Worker.
+2. Enter the private token and verify `/api/admin/me` reports `owner_token` authentication.
+3. Reload the page and verify the session remains active without storing the token in localStorage.
+4. Log out and confirm `/api/admin/me` returns `401` again.
+5. Resolve a test decision and confirm `admin_audit` records the owner email and `owner-token` subject.
 
 ## What's NOT here (by design)
 

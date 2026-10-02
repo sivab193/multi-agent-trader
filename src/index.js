@@ -1,7 +1,10 @@
 // Multi Agent Trader (mat.siv19.dev) — REST API + cron + static assets.
 // PAPER TRADING ONLY. No broker, order-routing, or real-money code exists here.
 
-import { agentFromRequest, ownerFromRequest, newApiKey, sha256Hex, clientIpHash } from "./auth.js";
+import {
+  agentFromRequest, ownerFromRequest, newApiKey, sha256Hex, clientIpHash,
+  verifyOwnerToken, createOwnerSession, ownerSessionCookie, clearOwnerSessionCookie,
+} from "./auth.js";
 import { activeProvider, buildArbitrationState } from "./decision-provider.js";
 import { runScheduled } from "./cron.js";
 
@@ -17,7 +20,13 @@ const err = (status, message) => json({ ok: false, error: message }, status);
 const nowIso = () => new Date().toISOString();
 
 async function requireOwner(request, env) {
-  return ownerFromRequest(request, env);
+  const owner = await ownerFromRequest(request, env);
+  if (!owner) return null;
+  if (owner.auth_method === "owner_token" && !["GET", "HEAD"].includes(request.method)) {
+    const origin = request.headers.get("Origin");
+    if (origin !== new URL(request.url).origin) return null;
+  }
+  return owner;
 }
 
 function auditOwnerStatement(env, owner, action, target, detail = {}) {
@@ -646,11 +655,26 @@ export default {
       );
     }
 
-    // ---- owner (verified Cloudflare Access identity) ----
+    // ---- owner login (shared secret exchanged for a secure session cookie) ----
+    if (path === "/api/owner/login" && request.method === "POST") {
+      const ipHash = await clientIpHash(request);
+      if (!(await consumeRateLimit(env, "owner_login", ipHash, 15 * 60_000, 10))) {
+        return err(429, "too many login attempts — try again later");
+      }
+      const body = await readJson(request);
+      if (!(await verifyOwnerToken(body?.token, env))) return err(401, "invalid owner token");
+      const session = await createOwnerSession(env);
+      return json({ ok: true }, 200, { "set-cookie": ownerSessionCookie(session), "cache-control": "no-store" });
+    }
+    if (path === "/api/owner/logout" && request.method === "POST") {
+      return json({ ok: true }, 200, { "set-cookie": clearOwnerSessionCookie(), "cache-control": "no-store" });
+    }
+
+    // ---- owner (secure token session or verified Cloudflare Access identity) ----
     if (path === "/api/admin/me" && request.method === "GET") {
       const owner = await requireOwner(request, env);
-      if (!owner) return err(401, "verified owner identity required");
-      return json({ ok: true, owner: { email: owner.email, subject: owner.subject } });
+      if (!owner) return err(401, "owner login required");
+      return json({ ok: true, owner: { email: owner.email, subject: owner.subject, auth_method: owner.auth_method || "cloudflare_access" } });
     }
     {
       const m = path.match(/^\/api\/admin\/strategies\/(\d+)$/);
