@@ -4,11 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Intelligence File — Multi Agent Trader</title>
-<meta name="theme-color" content="#0b0d12">
+<meta name="theme-color" content="#0a0b0e">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-<div class="paper-banner">⚠️ PAPER TRADING SIMULATION — no real money. All trades are simulated with virtual cash.</div>
+<div class="paper-banner">⚠ PAPER TRADING SIMULATION — no real money. All trades are simulated with virtual cash.</div>
 <nav class="topnav">
   <a class="brand" href="/">Multi Agent <span>Trader</span></a>
   <a class="nl" href="/">Dashboard</a>
@@ -18,26 +20,42 @@
   <a class="nl" href="/intelligence">Intelligence</a>
   <a class="nl" href="/connect">Connect Agent</a>
   <a class="nl" href="/how-it-works">How it works</a>
+  <span class="navstat"><i class="ldot on"></i>paper sim</span>
 </nav>
 <main>
-  <h1>Intelligence File</h1>
-  <p class="muted">Everything the trading system has learned — the strategy journal, the rules, the mistake log — versioned and downloadable. Plug it into your own agents, fork it, argue with it. That's the point.</p>
-  <div class="card" id="box"><div class="muted">loading…</div></div>
+  <div class="page-head">
+    <div class="eyebrow">Strategy memory</div>
+    <h1>Intelligence File</h1>
+    <p class="lede">Everything the trading system has learned — the strategy journal, the rules, the mistake log — versioned and downloadable. Plug it into your own agents, fork it, argue with it. That's the point.</p>
+  </div>
+  <div class="split">
+    <div class="card" id="box" style="margin:0"><div class="muted">loading…</div></div>
+    <aside class="card" style="margin:0">
+      <h3>What's inside</h3>
+      <ul class="ticks">
+        <li>Doctrine — the rules every agent trades by</li>
+        <li>Market briefings with cited sources</li>
+        <li>Lessons learned, with the rule each one changed</li>
+        <li>Mistake log — tracked so the same error never repeats</li>
+      </ul>
+    </aside>
+  </div>
 </main>
-<footer>Multi Agent Trader · mat.siv19.dev · paper trading only · no real money</footer>
+<footer><span>Multi Agent Trader · mat.siv19.dev</span><span>paper trading only · no real money</span></footer>
 <script src="/js/app.js"></script>
 <script>
 (async () => {
   try {
     const res = await fetch("/api/intelligence?format=json");
-    const disp = res.headers.get("content-disposition") || "";
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     document.getElementById("box").innerHTML = `
-      <div class="kv"><dt>Version</dt><dd><b>v${data.version}</b></dd>
-      <dt>Source</dt><dd>${esc(data.source || "")}</dd>
+      <div class="label">Latest version</div>
+      <div class="hero-title" style="margin:6px 0 16px">v${esc(data.version)}</div>
+      <dl class="kv"><dt>Source</dt><dd>${esc(data.source || "")}</dd>
       <dt>Exported</dt><dd>${esc(data.exported_at || "")}</dd>
-      <dt>Note</dt><dd>${esc(data.note || "")}</dd></div>
-      <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+      <dt>Note</dt><dd style="font-family:var(--sans)">${esc(data.note || "")}</dd></dl>
+      <div style="margin-top:18px;display:flex;gap:8px;flex-wrap:wrap">
         <a class="btn" href="/api/intelligence?format=md">⬇ Download markdown</a>
         <a class="btn ghost" href="/api/intelligence?format=json">⬇ Download JSON</a>
       </div>`;

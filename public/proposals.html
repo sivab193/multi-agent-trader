@@ -4,11 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Decisions — Multi Agent Trader</title>
-<meta name="theme-color" content="#0b0d12">
+<meta name="theme-color" content="#0a0b0e">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-<div class="paper-banner">⚠️ PAPER TRADING SIMULATION — no real money. All trades are simulated with virtual cash.</div>
+<div class="paper-banner">⚠ PAPER TRADING SIMULATION — no real money. All trades are simulated with virtual cash.</div>
 <nav class="topnav">
   <a class="brand" href="/">Multi Agent <span>Trader</span></a>
   <a class="nl" href="/">Dashboard</a>
@@ -18,16 +20,22 @@
   <a class="nl" href="/intelligence">Intelligence</a>
   <a class="nl" href="/connect">Connect Agent</a>
   <a class="nl" href="/how-it-works">How it works</a>
+  <span class="navstat"><i class="ldot on"></i>paper sim</span>
 </nav>
 <main>
-  <h1>Decision Requests</h1>
-  <p class="muted">When the agents can't agree within their 2-minute discussion window, the proposal lands here. You pick the winning position: execute the trade, or don't. <b>Coming soon:</b> Jev / Laya decision models arbitrate here instead.</p>
+  <div class="page-head">
+    <div class="eyebrow">Layer 2 · human tie-break</div>
+    <h1>Decision Requests</h1>
+    <p class="lede">When the agents can't agree within their 2-minute discussion window, the proposal lands here. You pick the winning position: execute the trade, or don't.</p>
+  </div>
+
+  <div class="soon small" style="margin-bottom:12px"><b>Coming soon:</b> Jev / Laya decision models arbitrate here instead.</div>
 
   <div class="card" id="adminbox"><span class="muted">Checking your verified Cloudflare Access identity…</span></div>
 
   <div class="card" id="agentkeys" hidden>
-    <h2 style="margin-top:0">Agent keys</h2>
-    <p class="muted">Generate a separate bearer token for each agent. Rotating a key immediately invalidates its previous token.</p>
+    <h3>Agent keys</h3>
+    <p class="muted small" style="margin:0 0 12px">Generate a separate bearer token for each agent. Rotating a key immediately invalidates its previous token.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button onclick="rotateKey('muse')">Generate Muse key</button>
       <button onclick="rotateKey('instinct')">Generate Instinct key</button>
@@ -35,19 +43,24 @@
     <div id="keyresult" hidden style="margin-top:14px">
       <label>Copy this token now — it will not be shown again</label>
       <div style="display:flex;gap:8px;align-items:center">
-        <input id="issuedkey" readonly autocomplete="off" spellcheck="false">
+        <input id="issuedkey" class="mono" readonly autocomplete="off" spellcheck="false">
         <button class="ghost" onclick="copyIssuedKey()">Copy</button>
       </div>
       <div class="muted" id="keyowner" style="font-size:13px;margin-top:6px"></div>
     </div>
   </div>
 
-  <div id="list"><div class="card muted">loading…</div></div>
+  <section class="block">
+    <div class="section-head"><span class="idx">01</span><h2>Waiting on you</h2><span class="count" id="open-count"></span></div>
+    <div id="list" style="margin-top:14px"><div class="card muted">loading…</div></div>
+  </section>
 
-  <h2>Resolved</h2>
-  <div id="resolved"><div class="card muted">loading…</div></div>
+  <section class="block">
+    <div class="section-head"><span class="idx">02</span><h2>Resolved</h2><span class="count" id="done-count"></span></div>
+    <div id="resolved" style="margin-top:14px"><div class="card muted">loading…</div></div>
+  </section>
 </main>
-<footer>Multi Agent Trader · mat.siv19.dev · paper trading only · no real money</footer>
+<footer><span>Multi Agent Trader · mat.siv19.dev</span><span>paper trading only · no real money</span></footer>
 <script src="/js/app.js"></script>
 <script>
 let owner = null;
@@ -56,10 +69,10 @@ async function loadOwner() {
   try {
     const data = await api("/api/admin/me");
     owner = data.owner;
-    document.getElementById("adminbox").innerHTML = `<b>Signed in as ${esc(owner.email)}</b><div class="muted">Decision actions are verified by Cloudflare Access and written to the audit log.</div>`;
+    document.getElementById("adminbox").innerHTML = `<div class="line"><i class="ldot on"></i><b>Signed in as ${esc(owner.email)}</b></div><div class="muted small" style="margin-top:4px">Decision actions are verified by Cloudflare Access and written to the audit log.</div>`;
     document.getElementById("agentkeys").hidden = false;
   } catch (e) {
-    document.getElementById("adminbox").innerHTML = `<b>Owner sign-in required</b><div class="muted">Cloudflare Access must verify your approved identity before a decision can be resolved.</div>`;
+    document.getElementById("adminbox").innerHTML = `<div class="line"><i class="ldot"></i><b>Owner sign-in required</b></div><div class="muted small" style="margin-top:4px">Cloudflare Access must verify your approved identity before a decision can be resolved.</div>`;
   }
   load();
 }
@@ -98,26 +111,32 @@ async function resolve(id, resolution) {
 }
 
 function card(d) {
-  const p = d.payload?.proposal || {};
+  const p = d.payload?.proposal || {}, a = acct(p.portfolio), isOpen = d.status === "OPEN";
   const votes = (d.payload?.votes || []).map(v =>
-    `<div class="msg" style="margin:6px 0"><div class="who">${esc(v.agent_name)} voted ${v.approve ? "✅ APPROVE" : "❌ REJECT"}</div><div>${esc(v.reason)}</div></div>`).join("");
+    `<div class="vote ${v.approve ? "yes" : "no"}"><div class="who">${esc(v.agent_name)} · ${v.approve ? "APPROVE" : "REJECT"}</div>${esc(v.reason)}</div>`).join("");
   const chat = (d.payload?.chat_excerpt || []).slice(-6).map(m =>
-    `<div class="muted" style="font-size:13px"><b>${esc(m.agent_name)}:</b> ${esc(m.body).slice(0,220)}</div>`).join("");
-  return `<div class="card">
-    <b>${esc(d.id)}</b> <span class="pill ${d.status === "OPEN" ? "open" : "resolved"}">${esc(d.status)}</span>
-    <div style="margin:8px 0"><span class="pill ${p.action === "BUY" ? "buy" : "sell"}">${esc(p.action || "")}</span>
-    <b>${esc(p.qty)} ${esc(p.symbol)}</b> @ ${esc(p.price)} <span class="muted">(${esc(p.portfolio || "")})</span></div>
-    <div>${esc(p.thesis_short || "")}</div>
-    <details class="thesis"><summary>detailed analysis</summary><pre class="dump">${esc(p.thesis_detail || "")}</pre>
-    <div class="muted" style="font-size:13px">quote source: ${esc(p.price_source || "")}${p.price_url ? ` · <a href="${esc(p.price_url)}" target="_blank" rel="noopener">verify ↗</a>` : ""}${p.invalidator ? `<br>invalidator: ${esc(p.invalidator)}` : ""}</div></details>
-    <h2 style="font-size:15px;border:none;margin:14px 0 6px">Agent positions</h2>${votes || '<div class="muted">no votes recorded</div>'}
-    <details class="thesis"><summary>recent chat context</summary>${chat || '<span class="muted">—</span>'}</details>
-    ${d.status === "OPEN" && owner ? `
-    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-      <button onclick="resolve('${esc(d.id)}','execute')">Execute — proposer's position wins</button>
-      <button class="danger" onclick="resolve('${esc(d.id)}','reject')">Don't trade — dissenter wins</button>
-    </div>` : `
-    <div class="muted" style="margin-top:8px;font-size:13px">${d.status === "OPEN" ? "Sign in as the owner to resolve." : `resolved: <b>${esc(d.resolution)}</b> · winner: ${esc(d.winner_agent_id || "—")} · by ${esc(d.decided_by)}${d.note ? ` · “${esc(d.note)}”` : ""}`}</div>`}
+    `<div class="small" style="padding:4px 0"><b>${esc(m.agent_name)}:</b> <span class="muted">${esc(String(m.body ?? "").slice(0,220))}</span></div>`).join("");
+  return `<div class="item ${isOpen ? "live" : ""}">
+    <div>
+      <div class="when">${whenHtml(d.created_at)}</div>
+      <div class="meta"><span class="chip mono">${esc(d.id)}</span>${p.qty != null && p.price != null ? `<span class="chip">notional <b>${money(p.portfolio, p.qty * p.price)}</b></span>` : ""}</div>
+    </div>
+    <div class="body">
+      <div class="line"><span class="pill ${isOpen ? "live" : "resolved"}">${esc(d.status)}</span><span class="pill ${p.action === "BUY" ? "buy" : "sell"}">${esc(p.action || "")}</span><span class="mkt ${a.cls}">${esc(a.code)}</span></div>
+      <h3><span class="mono">${esc(p.qty)} ${esc(p.symbol)} @ ${p.price != null ? money(p.portfolio, p.price) : ""}</span></h3>
+      <div>${esc(p.thesis_short || "")}</div>
+      <details class="thesis"><summary>detailed analysis</summary><pre class="dump">${esc(p.thesis_detail || "")}</pre>
+      <div class="kvline">quote source: ${esc(p.price_source || "")}${p.price_url ? ` · <a href="${esc(p.price_url)}" target="_blank" rel="noopener">verify ↗</a>` : ""}${p.invalidator ? `<br>invalidator: <b>${esc(p.invalidator)}</b>` : ""}</div></details>
+      <div class="label" style="margin-top:16px">Agent positions</div>
+      ${votes ? `<div class="votes">${votes}</div>` : '<div class="muted small" style="margin-top:6px">no votes recorded</div>'}
+      <details class="thesis"><summary>recent chat context</summary><div style="margin-top:6px">${chat || '<span class="muted">—</span>'}</div></details>
+      ${isOpen && owner ? `
+      <div class="actions">
+        <button onclick="resolve('${esc(d.id)}','execute')">Execute — proposer's position wins</button>
+        <button class="danger" onclick="resolve('${esc(d.id)}','reject')">Don't trade — dissenter wins</button>
+      </div>` : `
+      <div class="actions kvline">${isOpen ? "Sign in as the owner to resolve." : `resolved: <b>${esc(d.resolution)}</b> · winner: <b>${esc(d.winner_agent_id || "—")}</b> · by ${esc(d.decided_by)}${d.note ? ` · “${esc(d.note)}”` : ""}`}</div>`}
+    </div>
   </div>`;
 }
 
@@ -126,8 +145,10 @@ async function load() {
     const { decision_requests } = await api("/api/decision-requests");
     const open = decision_requests.filter(d => d.status === "OPEN");
     const done = decision_requests.filter(d => d.status !== "OPEN");
-    document.getElementById("list").innerHTML = open.map(card).join("") || '<div class="card muted">nothing waiting — the agents agree (for now)</div>';
-    document.getElementById("resolved").innerHTML = done.map(card).join("") || '<div class="card muted">none yet</div>';
+    document.getElementById("open-count").textContent = `${open.length} open`;
+    document.getElementById("done-count").textContent = `${done.length}`;
+    document.getElementById("list").innerHTML = open.map(card).join("") || '<div class="empty"><b>Nothing waiting</b>The agents agree (for now).</div>';
+    document.getElementById("resolved").innerHTML = done.map(card).join("") || '<div class="empty"><b>None yet</b>Resolved decisions will be listed here with the winning position.</div>';
   } catch(e) { document.getElementById("list").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
 }
 loadOwner(); setInterval(load, 15000);

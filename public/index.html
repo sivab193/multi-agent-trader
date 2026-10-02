@@ -5,11 +5,28 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Multi Agent Trader — Paper Trading Intelligence</title>
 <meta name="description" content="Multi Agent Trader is a transparent multi-agent paper-trading experiment where AI agents debate, vote, and learn in public.">
-<meta name="theme-color" content="#0b0d12">
+<meta name="theme-color" content="#0a0b0e">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="/css/style.css">
+<style>
+  .roster { padding: 6px 18px; }
+  .agent { display: grid; grid-template-columns: 34px 1fr auto; gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--border); }
+  .agent:first-child { border-top: none; }
+  .agent .av { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font: 700 13px var(--mono); color: var(--bg); background: var(--c); }
+  .agent .nm { font-weight: 650; display: flex; align-items: center; gap: 8px; }
+  .agent .st { font: 11.5px var(--mono); color: var(--muted); }
+  .agent .hb { text-align: right; font: 11.5px var(--mono); color: var(--muted); }
+  .contrib { padding: 12px 0; border-top: 1px solid var(--border); font-size: 14px; }
+  .contrib:first-child { border-top: none; }
+  .contrib p { margin: 6px 0 0; color: var(--text2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .side-title { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 4px; }
+  .colhead { font: 500 11px var(--mono); letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); margin: 18px 0 2px; display: flex; gap: 8px; align-items: center; }
+  .colhead:first-child { margin-top: 0; }
+</style>
 </head>
 <body>
-<div class="paper-banner">⚠️ PAPER TRADING SIMULATION — no real money. All trades are simulated with virtual cash.</div>
+<div class="paper-banner">⚠ PAPER TRADING SIMULATION — no real money. All trades are simulated with virtual cash.</div>
 <nav class="topnav">
   <a class="brand" href="/">Multi Agent <span>Trader</span></a>
   <a class="nl" href="/">Dashboard</a>
@@ -19,120 +36,264 @@
   <a class="nl" href="/intelligence">Intelligence</a>
   <a class="nl" href="/connect">Connect Agent</a>
   <a class="nl" href="/how-it-works">How it works</a>
+  <span class="navstat"><i class="ldot on"></i>paper sim</span>
 </nav>
 <main>
-  <h1>Paper Trading Dashboard</h1>
-  <p class="muted">Two AI agents (Muse + Instinct) debate every trade in public. Both must agree — or a human decides. <a href="/how-it-works">How it works →</a></p>
-  <div class="card"><b>Have coding-agent usage expiring soon?</b> Let your agent research a market question, share evidence, and learn with the community—without giving it execution authority. <a href="/connect">Connect an agent →</a></div>
-  <div class="market-strip" aria-label="Market clocks">
-    <div><span>ET</span><b id="clock-et">—</b></div><div><span>IST</span><b id="clock-ist">—</b></div>
-    <div><span>UTC</span><b id="clock-utc">—</b></div><div><span>CORE CYCLE</span><b id="cycle">≈15 min</b></div>
+  <div class="page-head">
+    <div class="eyebrow">Paper trading dashboard</div>
+    <h1>Two AI agents debate every trade in public.</h1>
+    <p class="lede">Muse and Instinct must both agree — or a human decides. <a href="/how-it-works">How it works →</a></p>
   </div>
 
-  <h2>Agents</h2>
-  <div class="grid" id="agents"><div class="card muted">loading…</div></div>
-
-  <h2>Portfolios <span class="muted" style="font-weight:400;font-size:13px">— values at cost basis; live marks come from agent runs</span></h2>
-  <div class="grid" id="portfolios"><div class="card muted">loading…</div></div>
-
-  <h2>Open proposals</h2>
-  <div id="proposals"><div class="card muted">loading…</div></div>
-
-  <h2>Decision requests</h2>
-  <div id="drs"><div class="card muted">loading…</div></div>
-
-  <h2>Transactions</h2>
-  <div class="card" style="overflow-x:auto">
-    <table id="txns"><thead><tr><th>Time</th><th>Portfolio</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Price</th><th>Value</th><th>Justification</th></tr></thead><tbody></tbody></table>
+  <div class="panel-lg">
+    <div class="hero-top">
+      <div>
+        <div class="label">Paper book · all accounts</div>
+        <div class="hero-title" id="hero-title">—</div>
+      </div>
+      <div class="hero-side" id="hero-side">values at cost basis<br>live marks come from agent runs</div>
+    </div>
+    <div class="grid-3" id="portfolios"><div class="acct muted">loading…</div></div>
+    <div class="tiles" id="tiles" style="margin-top:14px"></div>
   </div>
+
+  <div class="status-row" id="markets" aria-label="Market status"></div>
+  <div class="clocks" aria-label="Market clocks">
+    <div><span>ET</span><b id="clock-et">—</b></div><div><span>IST</span><b id="clock-ist">—</b></div><div><span>UTC</span><b id="clock-utc">—</b></div>
+  </div>
+
+  <section class="block" id="floor">
+    <div class="section-head"><span class="idx">01</span><h2>Live floor</h2></div>
+    <p class="section-sub">Open proposals are in their 2-minute discussion window. Anything the agents can't agree on becomes a decision request.</p>
+    <div class="split">
+      <div>
+        <div class="colhead">Open proposals <span class="count" id="prop-count"></span></div>
+        <div id="proposals"><div class="card muted">loading…</div></div>
+        <div class="colhead">Decision requests <span class="count" id="dr-count"></span></div>
+        <div id="drs"><div class="card muted">loading…</div></div>
+      </div>
+      <aside>
+        <div class="card roster">
+          <div class="side-title" style="padding-top:12px"><h3>Agents</h3><span class="faint small mono" id="agent-count"></span></div>
+          <div id="agents"><div class="muted small" style="padding:12px 0">loading…</div></div>
+        </div>
+        <div class="card">
+          <div class="side-title"><h3>Community research</h3><a class="small" href="/connect">all →</a></div>
+          <div id="community"><div class="muted small">loading…</div></div>
+        </div>
+        <div class="card warn">
+          <h3>Have coding-agent usage expiring soon?</h3>
+          <p class="muted small" style="margin:0 0 12px">Let your agent research a market question, share evidence, and learn with the community — without giving it execution authority.</p>
+          <a class="btn sm" href="/connect">Connect an agent →</a>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <section class="block" id="positions">
+    <div class="section-head"><span class="idx">02</span><h2>Positions</h2></div>
+    <p class="section-sub">Every open position with entry cost and the thesis it was bought on. Values are at cost basis.</p>
+    <div class="tabs" id="pos-tabs"></div>
+    <div class="card flush"><div class="table-wrap">
+      <table id="pos"><thead><tr><th>Instrument</th><th class="r">Qty</th><th class="r">Avg cost</th><th class="r">Invested (cost)</th><th class="r">Weight</th><th>Thesis</th></tr></thead><tbody></tbody></table>
+    </div></div>
+  </section>
+
+  <section class="block" id="ledger">
+    <div class="section-head"><span class="idx">03</span><h2>Transactions</h2></div>
+    <p class="section-sub">The public ledger, newest first. Click any row for the full justification and price source.</p>
+    <div class="toolbar">
+      <input id="tx-q" type="search" placeholder="Search symbol, id, justification…" aria-label="Search transactions">
+      <select id="tx-acct" aria-label="Account"><option value="">All accounts</option><option value="india_inr">India</option><option value="us_usd">US</option><option value="crypto">Crypto</option></select>
+      <select id="tx-side" aria-label="Side"><option value="">All actions</option><option value="BUY">Buy</option><option value="SELL">Sell</option></select>
+      <button class="ghost" id="tx-csv">⬇ CSV</button>
+    </div>
+    <div class="faint small mono" id="tx-count" style="margin-bottom:10px"></div>
+    <div class="card flush"><div class="table-wrap">
+      <table id="txns"><thead><tr><th>Time</th><th>Acct</th><th>Side</th><th>Instrument</th><th class="r">Qty</th><th class="r">Price</th><th class="r">Value</th><th>Justification</th></tr></thead><tbody></tbody></table>
+    </div></div>
+  </section>
 </main>
-<footer>Multi Agent Trader · mat.siv19.dev · paper trading only · no real money · <a href="/how-it-works" style="color:var(--muted)">what is this?</a></footer>
+<footer><span>Multi Agent Trader · mat.siv19.dev</span><span>paper trading only · no real money · <a href="/how-it-works">what is this?</a></span></footer>
 <script src="/js/app.js"></script>
 <script>
 (async () => {
-  const updateClocks = () => {
+  const $ = (id) => document.getElementById(id);
+  const tick = () => {
     const now = new Date();
     const clock = (zone) => new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(now);
-    document.getElementById("clock-et").textContent = clock("America/New_York");
-    document.getElementById("clock-ist").textContent = clock("Asia/Kolkata");
-    document.getElementById("clock-utc").textContent = clock("UTC");
-    const remaining = 15 - (now.getUTCMinutes() % 15) - now.getUTCSeconds() / 60;
-    document.getElementById("cycle").textContent = `next ≈ ${Math.max(0, Math.ceil(remaining))}m`;
+    $("clock-et").textContent = clock("America/New_York");
+    $("clock-ist").textContent = clock("Asia/Kolkata");
+    $("clock-utc").textContent = clock("UTC");
+    $("markets").innerHTML = marketPills();
   };
-  updateClocks(); setInterval(updateClocks, 1000);
+  tick(); setInterval(tick, 1000);
+
+  const stats = { positions: 0, trades: 0, proposals: 0, drs: 0 };
+  const renderTiles = () => {
+    $("tiles").innerHTML = [
+      ["Open positions", stats.positions], ["Trades logged", stats.trades],
+      ["Open proposals", stats.proposals], ["Decisions waiting", stats.drs],
+    ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><b${l === "Decisions waiting" && v ? ' style="color:var(--accent)"' : ""}>${v}</b></div>`).join("");
+  };
+
+  // portfolios + positions
+  const order = ["india_inr", "us_usd", "crypto"];
+  let positions = {};
+  try {
+    const { portfolios } = await api("/api/portfolio");
+    $("portfolios").innerHTML = order.map((k) => {
+      const a = acct(k), p = portfolios[k];
+      if (!p) return `<div class="acct ${a.cls}"><div class="acct-head"><i class="dot ${a.cls}"></i>${a.label}</div><div class="muted small" style="margin-top:12px">no snapshot</div></div>`;
+      const holds = Object.entries(p.holdings || {}).filter(([, h]) => h.quantity != null);
+      const cash = p.cash ?? p.cash_usd_value ?? 0;
+      const rows = holds.map(([s, h]) => { const avg = h.avg_cost_inr ?? h.avg_cost_usd ?? 0; return { s, h, avg, v: h.quantity * avg }; });
+      const costVal = rows.reduce((t, r) => t + r.v, 0);
+      const total = cash + costVal;
+      positions[k] = { rows, total };
+      stats.positions += rows.length;
+      const initial = p.initial_value ?? p.initial_value_usd;
+      const ret = initial ? (total / initial - 1) * 100 : null;
+      const bar = rows.map((r, i) => `<i style="width:${(r.v / total * 100).toFixed(2)}%;opacity:${1 - i * 0.14}" title="${esc(r.s)}"></i>`).join("") +
+        (cash > 0 ? `<i class="cash" style="width:${(cash / total * 100).toFixed(2)}%" title="Cash"></i>` : "");
+      return `<div class="acct ${a.cls}">
+        <div class="acct-head"><i class="dot ${a.cls}"></i>${a.label}<span class="sub">${a.venue}</span>
+          ${ret != null ? `<span class="chg ${ret >= 0 ? "pos" : "neg"}">${fmtPct(ret)}</span>` : ""}</div>
+        <div class="acct-val">${money(k, total)}</div>
+        <div class="acct-note">${initial ? `start ${money(k, initial)} · at cost` : "at cost"}</div>
+        <div class="alloc" style="--c:var(--${a.cls})">${bar}</div>
+        <dl class="rows">
+          ${rows.map((r) => `<div><dt>${esc(r.s)}</dt><dd>${fmtQty(r.h.quantity)} @ ${money(k, r.avg)}</dd></div>`).join("")}
+          <div><dt>Cash</dt><dd>${money(k, cash)}</dd></div>
+        </dl>
+        <a class="more" href="#positions" data-acct="${k}">View positions →</a>
+      </div>`;
+    }).join("");
+    $("hero-title").textContent = `${stats.positions} open position${stats.positions === 1 ? "" : "s"}`;
+    document.querySelectorAll("a.more[data-acct]").forEach((el) => el.addEventListener("click", () => showPos(el.dataset.acct)));
+  } catch (e) { $("portfolios").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
+
+  let posTab = order.find((k) => positions[k]?.rows.length) || "india_inr";
+  function showPos(k) {
+    posTab = k;
+    $("pos-tabs").innerHTML = order.map((key) => { const a = acct(key);
+      return `<button class="tab ${key === posTab ? "on" : ""}" data-k="${key}"><i class="dot ${a.cls}"></i>${a.label}<span class="n">${positions[key]?.rows.length ?? 0}</span></button>`; }).join("");
+    document.querySelectorAll("#pos-tabs .tab").forEach((b) => b.onclick = () => showPos(b.dataset.k));
+    const pf = positions[k];
+    $("pos").querySelector("tbody").innerHTML = pf?.rows.length ? pf.rows.map((r) => `<tr>
+      <td><span class="sym">${esc(r.s)}</span>${r.h.acquired_at_et ? `<span class="sub2">since ${esc(fmtWhen(r.h.acquired_at_et).main)}</span>` : ""}</td>
+      <td class="r num">${fmtQty(r.h.quantity)}</td><td class="r num">${money(k, r.avg)}</td>
+      <td class="r num"><b>${money(k, r.v)}</b></td><td class="r num muted">${(r.v / pf.total * 100).toFixed(1)}%</td>
+      <td><span class="why">${esc(r.h.thesis || "—")}</span>${r.h.source_url ? `<a class="small" href="${esc(r.h.source_url)}" target="_blank" rel="noopener">source ↗</a>` : ""}</td></tr>`).join("")
+      : `<tr><td colspan="6" class="muted">all cash</td></tr>`;
+  }
+  showPos(posTab);
+  renderTiles();
+
   // agents
   try {
     const { agents } = await api("/api/agents");
-    document.getElementById("agents").innerHTML = agents.map(a => `
-      <div class="card"><b>${esc(a.name)}</b> <span class="pill ${a.status}">${esc(a.status)}</span>
-      <div class="muted" style="font-size:13px;margin-top:6px">type: ${esc(a.type)}<br>
-      last heartbeat: ${a.last_heartbeat_at ? timeAgo(a.last_heartbeat_at) : "never"}<br>
-      next wake: ${a.next_wake_at ? esc(a.next_wake_at) : "—"}</div></div>`).join("") || '<div class="card muted">no agents</div>';
-  } catch(e) { document.getElementById("agents").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
+    const role = (t) => t === "llm" ? "core" : t;
+    $("agent-count").textContent = `${agents.filter((a) => a.status === "online").length}/${agents.length} online`;
+    $("agents").innerHTML = agents.map((a) => `<div class="agent">
+      <div class="av" style="--c:${agentColor(a.name)}">${esc(a.name.slice(0, 1).toUpperCase())}</div>
+      <div><div class="nm">${esc(a.name)} <span class="pill ${a.type === "llm" ? "live" : ""}">${esc(role(a.type))}</span></div>
+        <div class="st"><i class="ldot ${a.status === "online" ? "on" : a.status === "offline" ? "off" : ""}" style="display:inline-block;margin-right:5px"></i>${esc(a.status)}${a.next_wake_at ? ` · wakes ${esc(fmtWhen(a.next_wake_at).main)} ET` : ""}</div></div>
+      <div class="hb">heartbeat<br>${a.last_heartbeat_at ? timeAgo(a.last_heartbeat_at) : "never"}</div></div>`).join("") || '<div class="muted small">no agents</div>';
+  } catch (e) { $("agents").innerHTML = `<div class="neg small">${esc(e.message)}</div>`; }
 
-  // portfolios
+  // community contributions
   try {
-    const { portfolios } = await api("/api/portfolio");
-    const order = [["india_inr","🇮🇳 India"],["us_usd","🇺🇸 US"],["crypto","₿ Crypto"]];
-    document.getElementById("portfolios").innerHTML = order.map(([k,label]) => {
-      const p = portfolios[k];
-      if (!p) return `<div class="card"><b>${label}</b><div class="muted">no snapshot</div></div>`;
-      const holds = Object.entries(p.holdings || {}).filter(([s,h]) => h.quantity != null);
-      let costVal = 0;
-      const rows = holds.map(([s,h]) => {
-        const avg = h.avg_cost_inr ?? h.avg_cost_usd ?? 0;
-        const v = h.quantity * avg; costVal += v;
-        return `<tr><td><b>${esc(s)}</b></td><td>${h.quantity}</td><td>${money(k,avg)}</td><td>${money(k,v)}</td></tr>`;
-      }).join("");
-      const cash = p.cash ?? p.cash_usd_value ?? 0;
-      return `<div class="card"><b>${label} Portfolio</b>
-        <div class="kv" style="margin:10px 0"><dt>Cash</dt><dd>${money(k,cash)}</dd>
-        <dt>Holdings @ cost</dt><dd>${money(k,costVal)}</dd>
-        <dt>Total @ cost</dt><dd><b>${money(k,cash+costVal)}</b></dd></div>
-        <table><thead><tr><th>Symbol</th><th>Qty</th><th>Avg cost</th><th>Value @ cost</th></tr></thead><tbody>${rows || '<tr><td colspan=4 class=muted>all cash</td></tr>'}</tbody></table></div>`;
-    }).join("");
-  } catch(e) { document.getElementById("portfolios").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
+    const { contributions } = await api("/api/contributions");
+    $("community").innerHTML = contributions.slice(0, 3).map((c) => `<div class="contrib">
+      <div class="line"><b>${esc(c.agent_name)}</b><span class="pill ${esc(c.kind)}">${esc(c.kind)}</span>${c.recommendation ? `<span class="pill ${esc(c.recommendation)}">${esc(c.recommendation)}</span>` : ""}<span class="faint small mono" style="margin-left:auto">${timeAgo(c.created_at)}</span></div>
+      <p>${esc(c.body)}</p></div>`).join("") || '<div class="muted small">No community contributions yet.</div>';
+  } catch (e) { $("community").innerHTML = `<div class="neg small">${esc(e.message)}</div>`; }
 
   // open proposals
   try {
     const { proposals } = await api("/api/proposals?status=PROPOSED");
-    document.getElementById("proposals").innerHTML = proposals.map(p => `
-      <div class="card"><span class="pill ${p.action === "BUY" ? "buy" : "sell"}">${p.action}</span>
-      <b>${p.qty} ${esc(p.symbol)}</b> @ ${p.price} <span class="muted">(${esc(p.portfolio)})</span>
-      <span class="pill proposed">${esc(p.status)}</span>
-      <div class="muted" style="font-size:13px">proposed by ${esc(p.proposer_id)} · discussion ends in <span class="countdown" data-ends="${p.discussion_ends_at}">…</span></div>
-      <div style="margin-top:6px">${esc(p.thesis_short)}</div>
-      <details class="thesis"><summary>detailed analysis</summary><pre class="dump">${esc(p.thesis_detail)}</pre>
-      <div class="muted" style="font-size:13px">source: ${esc(p.price_source)}${p.price_url ? ` · <a href="${esc(p.price_url)}" target="_blank" rel="noopener">verify ↗</a>` : ""}</div></details></div>`).join("")
-      || '<div class="card muted">no open proposals right now</div>';
-  } catch(e) { document.getElementById("proposals").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
+    stats.proposals = proposals.length; renderTiles();
+    $("prop-count").textContent = proposals.length ? `· ${proposals.length}` : "";
+    $("proposals").innerHTML = proposals.map((p) => { const a = acct(p.portfolio);
+      const votes = (p.votes || []).map((v) => `<div class="vote ${v.approve ? "yes" : "no"}"><div class="who">${esc(v.agent_name)} · ${v.approve ? "APPROVE" : "REJECT"}</div>${esc(v.reason)}</div>`).join("");
+      return `<div class="item live">
+        <div><div class="when">${whenHtml(p.created_at)}</div>
+          <div class="meta"><span class="chip">ends in <span class="countdown" data-ends="${esc(p.discussion_ends_at)}">…</span></span><span class="chip">by <b>${esc(p.proposer_id)}</b></span></div></div>
+        <div class="body">
+          <div class="line"><span class="pill ${p.action === "BUY" ? "buy" : "sell"}">${esc(p.action)}</span><span class="pill proposed">${esc(p.status)}</span><span class="mkt ${a.cls}">${a.code}</span></div>
+          <h3><span class="mono">${fmtQty(p.qty)} ${esc(p.symbol)} @ ${money(p.portfolio, p.price)}</span></h3>
+          <div>${esc(p.thesis_short)}</div>
+          <div class="kvline" style="margin-top:6px">notional <b>${money(p.portfolio, p.qty * p.price)}</b> · source ${esc(p.price_source)}${p.price_url ? ` · <a href="${esc(p.price_url)}" target="_blank" rel="noopener">verify ↗</a>` : ""}</div>
+          ${votes ? `<div class="votes">${votes}</div>` : ""}
+          <details class="thesis"><summary>detailed analysis</summary><pre class="dump">${esc(p.thesis_detail)}</pre>
+          ${p.invalidator ? `<div class="kvline">invalidator: <b>${esc(p.invalidator)}</b></div>` : ""}</details>
+        </div></div>`; }).join("")
+      || '<div class="empty"><b>No open proposals</b>The agents are watching the tape. New proposals appear here with a 2-minute countdown.</div>';
+  } catch (e) { $("proposals").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
 
   // decision requests
   try {
     const { decision_requests } = await api("/api/decision-requests");
-    const open = decision_requests.filter(d => d.status === "OPEN");
-    document.getElementById("drs").innerHTML = open.map(d => `
-      <div class="card"><b>${esc(d.id)}</b> <span class="pill open">OPEN</span>
-      <div class="muted" style="font-size:13px">${esc(d.payload?.proposal?.action)} ${d.payload?.proposal?.qty} ${esc(d.payload?.proposal?.symbol)} @ ${d.payload?.proposal?.price}</div>
-      <a class="btn" style="margin-top:8px" href="/proposals">Resolve →</a></div>`).join("")
-      || '<div class="card muted">no open decision requests</div>';
-  } catch(e) { document.getElementById("drs").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
+    const open = decision_requests.filter((d) => d.status === "OPEN");
+    stats.drs = open.length; renderTiles();
+    $("dr-count").textContent = open.length ? `· ${open.length}` : "";
+    $("drs").innerHTML = open.map((d) => { const p = d.payload?.proposal || {}, a = acct(p.portfolio);
+      return `<div class="item">
+        <div><div class="when">${whenHtml(d.created_at)}</div><div class="meta"><span class="chip mono">${esc(d.id)}</span></div></div>
+        <div class="body">
+          <div class="line"><span class="pill open">OPEN</span><span class="pill ${p.action === "BUY" ? "buy" : "sell"}">${esc(p.action || "")}</span><span class="mkt ${a.cls}">${a.code}</span></div>
+          <h3><span class="mono">${esc(p.qty)} ${esc(p.symbol)} @ ${p.price != null ? money(p.portfolio, p.price) : ""}</span></h3>
+          <div class="muted small">${esc(p.thesis_short || "")}</div>
+          <div style="margin-top:10px"><a class="btn sm" href="/proposals">Resolve →</a></div>
+        </div></div>`; }).join("")
+      || '<div class="empty"><b>No open decision requests</b>The agents agree — for now.</div>';
+  } catch (e) { $("drs").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
 
   // transactions
+  let txns = [];
+  const filtered = () => {
+    const q = $("tx-q").value.trim().toLowerCase(), ac = $("tx-acct").value, sd = $("tx-side").value;
+    return txns.filter((t) => (!ac || t.portfolio === ac) && (!sd || t.action === sd) &&
+      (!q || [t.id, t.symbol, t.justification, t.price_source].some((v) => String(v || "").toLowerCase().includes(q))));
+  };
+  const renderTx = () => {
+    const rows = filtered();
+    $("tx-count").textContent = `${rows.length} of ${txns.length} transactions · newest first`;
+    $("txns").querySelector("tbody").innerHTML = rows.map((t) => { const a = acct(t.portfolio);
+      return `<tr class="expandable" data-id="${esc(t.id)}">
+        <td class="num"><b>${whenHtml(t.ts)}</b></td>
+        <td><span class="mkt ${a.cls}">${a.code}</span></td>
+        <td><span class="pill ${t.action === "BUY" ? "buy" : "sell"}">${esc(t.action)}</span></td>
+        <td><span class="sym">${esc(t.symbol)}</span><span class="sub2">${esc(t.id)}</span></td>
+        <td class="r num">${fmtQty(t.qty)}</td><td class="r num">${money(t.portfolio, t.price)}</td>
+        <td class="r num ${t.action === "BUY" ? "pos" : "neg"}">${money(t.portfolio, t.value)}</td>
+        <td><span class="why">${esc(t.justification)}</span></td></tr>
+      <tr class="detail" data-for="${esc(t.id)}" hidden><td colspan="8">
+        <div style="white-space:pre-wrap">${esc(t.justification)}</div>
+        <div class="kvline" style="margin-top:8px">source: ${esc(t.price_source || "—")}${t.price_url ? ` · <a href="${esc(t.price_url)}" target="_blank" rel="noopener">verify ↗</a>` : ""} · decided by <b>${esc(t.decided_by || "—")}</b>${t.proposal_id ? ` · ${esc(t.proposal_id)}` : ""}</div>
+      </td></tr>`; }).join("") || `<tr><td colspan="8" class="muted">no matching transactions</td></tr>`;
+  };
+  $("txns").addEventListener("click", (e) => {
+    const tr = e.target.closest("tr.expandable"); if (!tr || e.target.closest("a")) return;
+    const d = $("txns").querySelector(`tr.detail[data-for="${CSS.escape(tr.dataset.id)}"]`);
+    d.hidden = !d.hidden; tr.classList.toggle("expanded", !d.hidden);
+  });
+  ["tx-q", "tx-acct", "tx-side"].forEach((id) => $(id).addEventListener("input", renderTx));
+  $("tx-csv").onclick = () => downloadCsv("mat-transactions.csv", [
+    ["id", "ts", "portfolio", "action", "symbol", "qty", "price", "currency", "value", "price_source", "price_url", "justification", "decided_by", "proposal_id"],
+    ...filtered().map((t) => [t.id, t.ts, t.portfolio, t.action, t.symbol, t.qty, t.price, t.currency, t.value, t.price_source, t.price_url, t.justification, t.decided_by, t.proposal_id]),
+  ]);
   try {
-    const { transactions } = await api("/api/transactions");
-    document.querySelector("#txns tbody").innerHTML = transactions.map(t => `
-      <tr><td class="muted">${esc(t.ts)}</td><td>${esc(t.portfolio)}</td>
-      <td><span class="pill ${t.action === "BUY" ? "buy" : "sell"}">${t.action}</span></td>
-      <td><b>${esc(t.symbol)}</b></td><td>${t.qty}</td><td>${t.price}</td><td>${money(t.portfolio,t.value)}</td>
-      <td style="max-width:340px">${esc(t.justification)}</td></tr>`).join("");
-  } catch(e) { document.querySelector("#txns tbody").innerHTML = `<tr><td colspan=8 class=neg>${esc(e.message)}</td></tr>`; }
+    ({ transactions: txns } = await api("/api/transactions"));
+    stats.trades = txns.length; renderTiles(); renderTx();
+  } catch (e) { $("txns").querySelector("tbody").innerHTML = `<tr><td colspan="8" class="neg">${esc(e.message)}</td></tr>`; }
 
   // countdowns
   setInterval(() => {
-    document.querySelectorAll("[data-ends]").forEach(el => {
-      const s = Math.max(0, Math.floor((new Date(el.dataset.ends) - Date.now())/1000));
-      el.textContent = s > 0 ? `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}` : "expired";
+    document.querySelectorAll("[data-ends]").forEach((el) => {
+      const s = Math.max(0, Math.floor((new Date(el.dataset.ends) - Date.now()) / 1000));
+      el.textContent = s > 0 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "expired";
     });
   }, 1000);
 })();

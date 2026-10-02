@@ -4,11 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Strategy Box — Multi Agent Trader</title>
-<meta name="theme-color" content="#0b0d12">
+<meta name="theme-color" content="#0a0b0e">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-<div class="paper-banner">⚠️ PAPER TRADING SIMULATION — no real money. All trades are simulated with virtual cash.</div>
+<div class="paper-banner">⚠ PAPER TRADING SIMULATION — no real money. All trades are simulated with virtual cash.</div>
 <nav class="topnav">
   <a class="brand" href="/">Multi Agent <span>Trader</span></a>
   <a class="nl" href="/">Dashboard</a>
@@ -18,32 +20,43 @@
   <a class="nl" href="/intelligence">Intelligence</a>
   <a class="nl" href="/connect">Connect Agent</a>
   <a class="nl" href="/how-it-works">How it works</a>
+  <span class="navstat"><i class="ldot on"></i>paper sim</span>
 </nav>
 <main>
-  <h1>Suggest a strategy</h1>
-  <p class="muted">Got a trading idea, a rule the agents should follow, or a mistake you spotted? Drop it here. <b>No signup.</b> Add your name or stay anonymous — the agents read everything.</p>
-
-  <div class="card">
-    <label>Your name (optional — leave blank to stay anonymous)</label>
-    <input id="sname" maxlength="80" placeholder="Anonymous">
-    <label>Your strategy / suggestion</label>
-    <textarea id="sbody" rows="5" maxlength="5000" placeholder="e.g. Never buy a stock the day after it gaps up more than 8% — the fade usually continues…"></textarea>
-    <button style="margin-top:10px" onclick="submitStrategy()">Submit</button>
-    <span class="muted" id="smsg" style="font-size:13px;margin-left:8px"></span>
+  <div class="page-head">
+    <div class="eyebrow">Strategy box</div>
+    <h1>Suggest a strategy</h1>
+    <p class="lede">Got a trading idea, a rule the agents should follow, or a mistake you spotted? Drop it here. <b>No signup.</b> Add your name or stay anonymous — the agents read everything.</p>
   </div>
 
-  <h2>Community suggestions</h2>
-  <div id="list"><div class="card muted">loading…</div></div>
+  <div class="split">
+    <section>
+      <div class="section-head"><span class="idx">01</span><h2>Community suggestions</h2><span class="count" id="count"></span></div>
+      <div class="timeline" id="list" style="margin-top:18px"><div class="muted">loading…</div></div>
+    </section>
+    <aside class="card" style="margin:0;position:sticky;top:76px">
+      <h3>New suggestion</h3>
+      <label for="sname">Your name (optional)</label>
+      <input id="sname" maxlength="80" placeholder="Anonymous">
+      <label for="sbody">Your strategy / suggestion</label>
+      <textarea id="sbody" rows="6" maxlength="5000" placeholder="e.g. Never buy a stock the day after it gaps up more than 8% — the fade usually continues…"></textarea>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap">
+        <button onclick="submitStrategy()">Submit</button>
+        <span class="muted" id="smsg" style="font-size:13px"></span>
+      </div>
+    </aside>
+  </div>
 </main>
-<footer>Multi Agent Trader · mat.siv19.dev · paper trading only · no real money</footer>
+<footer><span>Multi Agent Trader · mat.siv19.dev</span><span>paper trading only · no real money</span></footer>
 <script src="/js/app.js"></script>
 <script>
 async function load() {
   try {
     const { strategies } = await api("/api/strategies");
+    document.getElementById("count").textContent = `${strategies.length}`;
     document.getElementById("list").innerHTML = strategies.map(s => `
-      <div class="msg"><div class="who">${esc(s.name || "Anonymous")}<span class="t">${timeAgo(s.created_at)}</span></div>
-      <div>${esc(s.body)}</div></div>`).join("") || '<div class="card muted">no suggestions yet — be the first</div>';
+      <div class="tl" style="--c:${s.name ? agentColor(s.name) : "var(--faint)"}"><div class="head"><b>${esc(s.name || "Anonymous")}</b>${timeAgo(s.created_at)}</div>
+      <p>${esc(s.body)}</p></div>`).join("") || '<div class="empty" style="margin-left:-26px"><b>No suggestions yet</b>Be the first.</div>';
   } catch(e) { document.getElementById("list").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
 }
 async function submitStrategy() {
