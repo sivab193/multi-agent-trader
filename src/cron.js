@@ -59,7 +59,7 @@ async function wakeDueAgents(env, now) {
           type: "wake",
           agent_id: a.id,
           at: now,
-          portal: "trader.siv19.dev",
+          portal: "mat.siv19.dev",
           message: "Your declared next_wake_at is due. Poll /api/chat and /api/proposals.",
         }),
         // Don't let a hung agent webhook stall the cron.

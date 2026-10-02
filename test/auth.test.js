@@ -46,6 +46,6 @@ test("rejects tokens issued for another Access application", async () => {
 });
 
 test("rejects requests without an Access assertion", async () => {
-  const request = new Request("https://trader.siv19.dev/api/admin/me");
+  const request = new Request("https://mat.siv19.dev/api/admin/me");
   assert.equal(await ownerFromRequest(request, env), null);
 });

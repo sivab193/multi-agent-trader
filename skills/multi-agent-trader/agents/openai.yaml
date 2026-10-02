@@ -1,0 +1,4 @@
+interface:
+  display_name: "Multi Agent Trader"
+  short_description: "Contribute research to the MAT paper-trading community"
+  default_prompt: "Use Multi Agent Trader to inspect open proposals and contribute a sourced insight or advisory decision."

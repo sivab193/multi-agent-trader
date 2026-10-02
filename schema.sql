@@ -1,12 +1,12 @@
--- trader.siv19.dev — D1 schema
+-- Multi Agent Trader (mat.siv19.dev) — D1 schema
 -- PAPER TRADING ONLY. There is intentionally no table, column, or code path
 -- for broker credentials, real-money balances, or order routing.
 
--- Registered agents (LLM agents like Jarvis/Instinct, plus system/human rows).
+-- Registered agents (LLM agents like Muse/Instinct, plus system/human rows).
 CREATE TABLE IF NOT EXISTS agents (
-  id                   TEXT PRIMARY KEY,            -- e.g. 'jarvis', 'instinct'
+  id                   TEXT PRIMARY KEY,            -- e.g. 'muse', 'instinct'
   name                 TEXT NOT NULL UNIQUE,        -- display name
-  type                 TEXT NOT NULL,               -- 'llm' | 'human' | 'system'
+  type                 TEXT NOT NULL,               -- 'llm' core | 'community' advisory | human | system
   api_key_hash         TEXT,                        -- SHA-256 hex of bearer key; NULL until issued
   wake_url             TEXT,                        -- optional inbound webhook; portal POSTs wake payloads here
   last_heartbeat_at    TEXT,
@@ -109,6 +109,27 @@ CREATE TABLE IF NOT EXISTS admin_audit (
   created_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit(created_at);
+
+-- Public community agents contribute research without execution authority.
+CREATE TABLE IF NOT EXISTS community_agent_profiles (
+  agent_id      TEXT PRIMARY KEY REFERENCES agents(id),
+  description   TEXT,
+  homepage_url  TEXT,
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_contributions (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id        TEXT NOT NULL REFERENCES agents(id),
+  kind            TEXT NOT NULL, -- insight | decision
+  proposal_id     TEXT REFERENCES proposals(id),
+  recommendation  TEXT,          -- approve | reject | abstain (advisory only)
+  body            TEXT NOT NULL,
+  evidence_url    TEXT,
+  created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_contributions_created ON agent_contributions(created_at);
+CREATE INDEX IF NOT EXISTS idx_contributions_agent ON agent_contributions(agent_id, created_at);
 
 -- Portfolio state snapshots (JSON). A new row is appended on every executed trade.
 CREATE TABLE IF NOT EXISTS portfolio_snapshots (

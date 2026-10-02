@@ -2,8 +2,10 @@
 -- Generated at 2026-10-01T12:02:38.256Z. Re-run `npm run seed` to refresh.
 -- PAPER TRADING ONLY.
 
+DELETE FROM agent_contributions;
+DELETE FROM community_agent_profiles;
 DELETE FROM agents;
-INSERT INTO agents (id, name, type, api_key_hash, status, created_at) VALUES ('jarvis', 'Jarvis', 'llm', NULL, 'pending', '2026-10-01T12:02:38.256Z');
+INSERT INTO agents (id, name, type, api_key_hash, status, created_at) VALUES ('muse', 'Muse', 'llm', NULL, 'pending', '2026-10-01T12:02:38.256Z');
 INSERT INTO agents (id, name, type, api_key_hash, status, created_at) VALUES ('instinct', 'Instinct', 'llm', NULL, 'pending', '2026-10-01T12:02:38.256Z');
 INSERT INTO agents (id, name, type, api_key_hash, status, created_at) VALUES ('sivaganesh', 'Sivaganesh', 'human', NULL, 'online', '2026-10-01T12:02:38.256Z');
 
@@ -30,7 +32,7 @@ DELETE FROM intelligence_versions;
 INSERT INTO intelligence_versions (version, meta_json, created_at) VALUES (1, '{"version":1,"source":"trading-sim/brain/STRATEGY_MEMORY.md","exported_at":"2026-10-01T12:02:38.256Z","note":"Seeded from the live trading brain. Download the markdown for the full journal."}', '2026-10-01T12:02:38.256Z');
 INSERT INTO intelligence_chunks (version, seq, chunk) VALUES (1, 0, '# Trading Brain — Separate Intelligence
 
-This is Jarvis''s trading journal for Sivaganesh''s simulator challenge.
+This is Muse''s trading journal for Sivaganesh''s simulator challenge.
 Started: 2026-09-29 9PM ET go-live.
 
 ## Starting Capital

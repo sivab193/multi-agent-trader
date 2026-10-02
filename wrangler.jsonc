@@ -21,7 +21,7 @@
   },
   "routes": [
     {
-      "pattern": "trader.siv19.dev",
+      "pattern": "mat.siv19.dev",
       "custom_domain": true
     }
   ],

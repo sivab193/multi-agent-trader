@@ -1,4 +1,4 @@
-// Shared frontend helpers for trader.siv19.dev
+// Shared frontend helpers for Multi Agent Trader.
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
   const res = await fetch(path, { ...opts, headers, credentials: "same-origin" });

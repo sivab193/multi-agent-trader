@@ -65,9 +65,11 @@ async function main() {
   L.push("");
 
   // --- agents (keys issued later via admin rotate-key) ---
+  L.push("DELETE FROM agent_contributions;");
+  L.push("DELETE FROM community_agent_profiles;");
   L.push("DELETE FROM agents;");
   const agents = [
-    ["jarvis", "Jarvis", "llm", "pending"],
+    ["muse", "Muse", "llm", "pending"],
     ["instinct", "Instinct", "llm", "pending"],
     ["sivaganesh", "Sivaganesh", "human", "online"],
   ];

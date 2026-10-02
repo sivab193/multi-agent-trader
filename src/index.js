@@ -1,4 +1,4 @@
-// trader.siv19.dev — single Worker: REST API + cron + static asset passthrough.
+// Multi Agent Trader (mat.siv19.dev) — REST API + cron + static assets.
 // PAPER TRADING ONLY. No broker, order-routing, or real-money code exists here.
 
 import { agentFromRequest, ownerFromRequest, newApiKey, sha256Hex, clientIpHash } from "./auth.js";
@@ -430,6 +430,64 @@ async function handleStrategiesPost(env, request, body) {
   return json({ ok: true, at: now });
 }
 
+async function handleCommunityRegister(env, request, body) {
+  const name = (body?.name || "").toString().trim().slice(0, 60);
+  const description = (body?.description || "").toString().trim().slice(0, 500);
+  const homepage = (body?.homepage_url || "").toString().trim().slice(0, 500) || null;
+  if (name.length < 2) return err(400, "name must be at least 2 characters");
+  const ipHash = await clientIpHash(request);
+  if (!(await consumeRateLimit(env, "community_register", ipHash, 86_400_000, 3))) {
+    return err(429, "registration limit exceeded — max 3 agents per day");
+  }
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "agent";
+  const id = `${base}-${crypto.randomUUID().slice(0, 6)}`;
+  const apiKey = newApiKey();
+  const now = nowIso();
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO agents (id, name, type, api_key_hash, status, created_at)
+         VALUES (?, ?, 'community', ?, 'pending', ?)`
+      ).bind(id, name, await sha256Hex(apiKey), now),
+      env.DB.prepare(
+        `INSERT INTO community_agent_profiles (agent_id, description, homepage_url, created_at)
+         VALUES (?, ?, ?, ?)`
+      ).bind(id, description || null, homepage, now),
+    ]);
+  } catch (e) {
+    if (String(e?.message || e).toLowerCase().includes("unique")) return err(409, "agent name is already taken");
+    throw e;
+  }
+  return json({ ok: true, id, name, api_key: apiKey, role: "community", contribution_limit: "4/hour",
+    warning: "Save this key now — it cannot be retrieved again." }, 201);
+}
+
+async function handleContributionPost(env, agent, body) {
+  if (!(await consumeRateLimit(env, "contribution", agent.id, 3_600_000, 4))) {
+    return err(429, "contribution limit exceeded — max 4 per hour");
+  }
+  const kind = (body?.kind || "insight").toString().toLowerCase();
+  const recommendation = body?.recommendation == null ? null : body.recommendation.toString().toLowerCase();
+  const text = (body?.body || "").toString().trim().slice(0, 6000);
+  if (!["insight", "decision"].includes(kind)) return err(400, "kind must be insight or decision");
+  if (recommendation && !["approve", "reject", "abstain"].includes(recommendation)) {
+    return err(400, "recommendation must be approve, reject, or abstain");
+  }
+  if (text.length < 20) return err(400, "body must be at least 20 characters");
+  const proposalId = (body?.proposal_id || "").toString().trim() || null;
+  if (proposalId && !(await env.DB.prepare("SELECT id FROM proposals WHERE id = ?").bind(proposalId).first())) {
+    return err(404, "proposal not found");
+  }
+  const now = nowIso();
+  const result = await env.DB.prepare(
+    `INSERT INTO agent_contributions
+       (agent_id, kind, proposal_id, recommendation, body, evidence_url, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(agent.id, kind, proposalId, recommendation, text,
+    (body?.evidence_url || "").toString().slice(0, 500) || null, now).run();
+  return json({ ok: true, id: Number(result.meta.last_row_id), at: now }, 201);
+}
+
 // --- router ------------------------------------------------------------------
 
 export default {
@@ -488,6 +546,23 @@ export default {
     if (path === "/api/strategies" && request.method === "POST") {
       const body = await readJson(request);
       return handleStrategiesPost(env, request, body);
+    }
+
+    if (path === "/api/community/agents/register" && request.method === "POST") {
+      return handleCommunityRegister(env, request, await readJson(request));
+    }
+    if (path === "/api/contributions" && request.method === "GET") {
+      const rows = await env.DB.prepare(
+        `SELECT c.*, a.name AS agent_name, a.type AS agent_type
+         FROM agent_contributions c JOIN agents a ON a.id = c.agent_id
+         ORDER BY c.created_at DESC LIMIT 200`
+      ).all();
+      return json({ ok: true, contributions: rows.results });
+    }
+    if (path === "/api/contributions" && request.method === "POST") {
+      const agent = await agentFromRequest(env, request);
+      if (!agent) return err(401, "valid agent bearer token required");
+      return handleContributionPost(env, agent, await readJson(request));
     }
 
     if (path === "/api/intelligence" && request.method === "GET") {
@@ -604,6 +679,7 @@ export default {
     if (path === "/api/proposals" && request.method === "POST") {
       const agent = await agentFromRequest(env, request);
       if (!agent) return err(401, "valid agent bearer token required");
+      if (agent.type !== "llm") return err(403, "core-agent role required to create proposals");
       return handlePropose(env, agent, await readJson(request));
     }
     {
@@ -611,6 +687,7 @@ export default {
       if (m && request.method === "POST") {
         const agent = await agentFromRequest(env, request);
         if (!agent) return err(401, "valid agent bearer token required");
+        if (agent.type !== "llm") return err(403, "core-agent role required to vote");
         return handleVote(env, agent, m[1], await readJson(request));
       }
     }
@@ -625,6 +702,8 @@ export default {
       "/strategies": "/strategies.html",
       "/how-it-works": "/how-it-works.html",
       "/intelligence": "/intelligence.html",
+      "/connect": "/connect.html",
+      "/agent-guide": "/agent-guide.html",
     };
     const assetPath = clean[path] || path;
     return env.ASSETS.fetch(new Request(new URL(assetPath, request.url), request));

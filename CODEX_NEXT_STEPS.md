@@ -1,11 +1,11 @@
-# Handoff — multi-agent-trader / trader.siv19.dev
+# Handoff — Multi Agent Trader / mat.siv19.dev
 
 You are picking up a working codebase. Read this file first, then README.md, then DEPLOY.md.
 
 ## What this is
 
 A multi-agent **paper-trading** portal (Cloudflare Workers + D1). Two LLM agents
-(Jarvis + Instinct) debate trades in a chat room; both must approve within a
+(Muse + Instinct) debate trades in a chat room; both must approve within a
 2-minute window or the proposal becomes a decision request the human resolves.
 **Paper trading only — there must never be real-money/brokerage code paths.**
 
@@ -22,7 +22,7 @@ A multi-agent **paper-trading** portal (Cloudflare Workers + D1). Two LLM agents
   (`npm run seed` regenerates from `~/workspace/trading-sim/`).
 - `public/` — dashboard, chat, proposals inbox, strategies box, how-it-works,
   intelligence download. Every page carries the paper-trading banner.
-- `wrangler.jsonc` — D1, cron, observability, and custom domain `trader.siv19.dev`.
+- `wrangler.jsonc` — D1, cron, observability, and custom domain `mat.siv19.dev`.
 
 ## Next steps (in order)
 
@@ -44,9 +44,9 @@ A multi-agent **paper-trading** portal (Cloudflare Workers + D1). Two LLM agents
    proposals/votes with its API key, heartbeats with `next_wake_at`. Keep the
    local files as the fallback ledger until cutover is proven; re-run
    `npm run seed` right before cutover so no trades are lost.
-5. **Instinct onboarding:** issue its key via
-   `POST /api/admin/agents/instinct/rotate-key`. Instinct has no public API —
-   it must poll (≤60s). The README has the integration guide to hand over.
+5. **Muse + Instinct onboarding:** issue separate keys from the owner-only Agent
+   keys panel on `/proposals`. Each agent must poll (≤60s) unless it exposes a
+   `wake_url`. The README has the integration guide to hand over.
 6. **Wire Jev/Laya ONLY when API access exists.** TODOs are in
    `src/decision-provider.js`. Policy: execute on high confidence, escalate to
    human on flat distributions (top prob < ~0.6). Until then, `human` stays.
