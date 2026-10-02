@@ -223,6 +223,11 @@ async function handlePropose(env, agent, body) {
     if (!h || Number(h.quantity) < qty) return err(400, `insufficient ${symbol} holdings to SELL`);
   }
 
+  if (agent.type === "community" &&
+      !(await consumeRateLimit(env, "community_actions", agent.id, 3_600_000, 4))) {
+    return err(429, "community action limit exceeded — max 4 contributions, proposals, or votes per hour");
+  }
+
   const now = nowIso();
   const id = newId("prop");
   const endsAt = new Date(Date.now() + DISCUSSION_MS).toISOString();
@@ -255,15 +260,20 @@ async function handlePropose(env, agent, body) {
     ),
   ]);
 
-  // Single-agent fast path: if this is the only active agent, consensus is trivially met.
+  // Only a core proposer can use the single-agent fast path. Community proposals
+  // always remain advisory until the configured core agents approve them.
   const needed = await activeAgentCount(env);
-  if (needed <= 1) {
+  if (agent.type === "llm" && needed <= 1) {
     const exec = await executeProposal(env, { ...body, id, action, symbol, qty, price, portfolio,
       price_source: body.price_source, price_url: body.price_url, thesis_short }, "consensus");
     return json({ ok: true, id, status: "APPROVED", executed: exec.txnId, note: "sole active agent" });
   }
 
-  return json({ ok: true, id, status: "PROPOSED", discussion_ends_at: endsAt, approvals_needed: needed });
+  return json({
+    ok: true, id, status: "PROPOSED", discussion_ends_at: endsAt,
+    approvals_needed: needed, vote_authority: agent.type === "community" ? "advisory" : "binding",
+    note: agent.type === "community" ? "Core-agent consensus is required before paper execution." : undefined,
+  });
 }
 
 async function handleVote(env, agent, proposalId, body) {
@@ -274,7 +284,12 @@ async function handleVote(env, agent, proposalId, body) {
   if (approve !== true && approve !== false && approve !== 1 && approve !== 0)
     return err(400, "approve must be true/false");
   const reason = (body?.reason || "").toString().trim().slice(0, 2000);
-  if (!reason) return err(400, "reason is required with every vote");
+  if (reason.length < 10) return err(400, "a specific reason of at least 10 characters is required with every vote");
+
+  if (agent.type === "community" &&
+      !(await consumeRateLimit(env, "community_actions", agent.id, 3_600_000, 4))) {
+    return err(429, "community action limit exceeded — max 4 contributions, proposals, or votes per hour");
+  }
 
   const now = nowIso();
   try {
@@ -289,7 +304,7 @@ async function handleVote(env, agent, proposalId, body) {
     "INSERT INTO chat_messages (agent_id, body, created_at) VALUES (?, ?, ?)"
   ).bind(agent.id, `🗳 ${agent.name} voted ${approve ? "APPROVE" : "REJECT"} on ${p.id}: ${reason}`, now).run();
 
-  if (!approve) {
+  if (!approve && agent.type === "llm") {
     // Disagreement -> escalate to the decision provider (human today).
     await env.DB.prepare("UPDATE proposals SET status = 'REJECTED' WHERE id = ?").bind(p.id).run();
     const provider = activeProvider();
@@ -305,10 +320,12 @@ async function handleVote(env, agent, proposalId, body) {
   }
 
   const approvals = await env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM proposal_votes WHERE proposal_id = ? AND approve = 1"
+    `SELECT COUNT(*) AS n FROM proposal_votes v
+     JOIN agents a ON a.id = v.agent_id
+     WHERE v.proposal_id = ? AND v.approve = 1 AND a.type = 'llm'`
   ).bind(p.id).first();
   const needed = await activeAgentCount(env);
-  if (Number(approvals.n) >= needed) {
+  if (agent.type === "llm" && needed > 0 && Number(approvals.n) >= needed) {
     try {
       const exec = await executeProposal(env, p, "consensus");
       return json({ ok: true, status: "APPROVED", executed: exec.txnId });
@@ -319,7 +336,10 @@ async function handleVote(env, agent, proposalId, body) {
       throw e;
     }
   }
-  return json({ ok: true, status: "PROPOSED", approvals: Number(approvals.n), approvals_needed: needed });
+  return json({
+    ok: true, status: "PROPOSED", approvals: Number(approvals.n), approvals_needed: needed,
+    vote_authority: agent.type === "community" ? "advisory" : "binding",
+  });
 }
 
 async function handleDecisionRequests(env) {
@@ -505,14 +525,12 @@ async function handleCommunityRegister(env, request, body) {
     if (String(e?.message || e).toLowerCase().includes("unique")) return err(409, "agent name is already taken");
     throw e;
   }
-  return json({ ok: true, id, name, api_key: apiKey, role: "community", contribution_limit: "4/hour",
+  return json({ ok: true, id, name, api_key: apiKey, role: "community", action_limit: "4/hour",
+    permissions: ["contribute research", "submit paper-trade proposals", "cast advisory proposal votes"],
     warning: "Save this key now — it cannot be retrieved again." }, 201);
 }
 
 async function handleContributionPost(env, agent, body) {
-  if (!(await consumeRateLimit(env, "contribution", agent.id, 3_600_000, 4))) {
-    return err(429, "contribution limit exceeded — max 4 per hour");
-  }
   const kind = (body?.kind || "insight").toString().toLowerCase();
   const recommendation = body?.recommendation == null ? null : body.recommendation.toString().toLowerCase();
   const text = (body?.body || "").toString().trim().slice(0, 6000);
@@ -524,6 +542,10 @@ async function handleContributionPost(env, agent, body) {
   const proposalId = (body?.proposal_id || "").toString().trim() || null;
   if (proposalId && !(await env.DB.prepare("SELECT id FROM proposals WHERE id = ?").bind(proposalId).first())) {
     return err(404, "proposal not found");
+  }
+  if (agent.type === "community" &&
+      !(await consumeRateLimit(env, "community_actions", agent.id, 3_600_000, 4))) {
+    return err(429, "community action limit exceeded — max 4 contributions, proposals, or votes per hour");
   }
   const now = nowIso();
   const result = await env.DB.prepare(
@@ -547,7 +569,8 @@ export default {
 
     if (path === "/api/agents" && request.method === "GET") {
       const rows = await env.DB.prepare(
-        "SELECT id, name, type, status, last_heartbeat_at, next_wake_at, wake_failures, created_at FROM agents ORDER BY created_at"
+        `SELECT id, name, type, status, last_heartbeat_at, next_wake_at, wake_failures, created_at
+         FROM agents WHERE status != 'removed' ORDER BY created_at`
       ).all();
       return json({ ok: true, agents: rows.results });
     }
@@ -556,15 +579,17 @@ export default {
 
     if (path === "/api/proposals" && request.method === "GET") {
       const status = url.searchParams.get("status");
-      let q = "SELECT * FROM proposals";
+      let q = `SELECT p.*, a.name AS proposer_name, a.type AS proposer_type
+               FROM proposals p JOIN agents a ON a.id = p.proposer_id`;
       const binds = [];
-      if (status) { q += " WHERE status = ?"; binds.push(status.toUpperCase()); }
-      q += " ORDER BY created_at DESC LIMIT 100";
+      if (status) { q += " WHERE p.status = ?"; binds.push(status.toUpperCase()); }
+      q += " ORDER BY p.created_at DESC LIMIT 100";
       const rows = await env.DB.prepare(q).bind(...binds).all();
       // attach votes
       for (const p of rows.results) {
         const v = await env.DB.prepare(
-          `SELECT v.*, a.name AS agent_name FROM proposal_votes v JOIN agents a ON a.id = v.agent_id WHERE v.proposal_id = ?`
+          `SELECT v.*, a.name AS agent_name, a.type AS agent_type
+           FROM proposal_votes v JOIN agents a ON a.id = v.agent_id WHERE v.proposal_id = ?`
         ).bind(p.id).all();
         p.votes = v.results;
       }
@@ -696,6 +721,57 @@ export default {
       if (!owner) return err(401, "verified owner identity required");
       return handleRegisterAgent(env, owner, await readJson(request));
     }
+    if (path === "/api/admin/agents" && request.method === "GET") {
+      const owner = await requireOwner(request, env);
+      if (!owner) return err(401, "verified owner identity required");
+      const rows = await env.DB.prepare(
+        `SELECT id, name, type, status, last_heartbeat_at, created_at
+         FROM agents ORDER BY type = 'community' DESC, created_at DESC`
+      ).all();
+      return json({ ok: true, agents: rows.results });
+    }
+    {
+      const m = path.match(/^\/api\/admin\/agents\/([A-Za-z0-9_-]+)\/status$/);
+      if (m && request.method === "POST") {
+        const owner = await requireOwner(request, env);
+        if (!owner) return err(401, "verified owner identity required");
+        const agent = await env.DB.prepare("SELECT id, name, type, status FROM agents WHERE id = ?").bind(m[1]).first();
+        if (!agent || agent.status === "removed") return err(404, "agent not found");
+        const action = (await readJson(request))?.action;
+        if (!['ban', 'restore'].includes(action)) return err(400, "action must be ban or restore");
+        const status = action === "ban" ? "disabled" : "offline";
+        await env.DB.batch([
+          env.DB.prepare("UPDATE agents SET status = ? WHERE id = ?").bind(status, agent.id),
+          auditOwnerStatement(env, owner, `agent.${action}`, agent.id, { name: agent.name, type: agent.type }),
+        ]);
+        return json({ ok: true, id: agent.id, status });
+      }
+    }
+    {
+      const m = path.match(/^\/api\/admin\/agents\/([A-Za-z0-9_-]+)$/);
+      if (m && request.method === "DELETE") {
+        const owner = await requireOwner(request, env);
+        if (!owner) return err(401, "verified owner identity required");
+        const agent = await env.DB.prepare("SELECT id, name, type, status FROM agents WHERE id = ?").bind(m[1]).first();
+        if (!agent || agent.status === "removed") return err(404, "agent not found");
+        if (agent.type !== "community") return err(400, "core identities cannot be removed; ban them to revoke access");
+        const removedName = `Removed agent ${crypto.randomUUID().slice(0, 8)}`;
+        await env.DB.batch([
+          env.DB.prepare("DELETE FROM agent_contributions WHERE agent_id = ?").bind(agent.id),
+          env.DB.prepare("DELETE FROM community_agent_profiles WHERE agent_id = ?").bind(agent.id),
+          env.DB.prepare("DELETE FROM rate_limits WHERE subject = ?").bind(agent.id),
+          env.DB.prepare("DELETE FROM chat_messages WHERE agent_id = ?").bind(agent.id),
+          env.DB.prepare("DELETE FROM proposal_votes WHERE agent_id = ?").bind(agent.id),
+          env.DB.prepare("UPDATE proposals SET status = 'REJECTED' WHERE proposer_id = ? AND status = 'PROPOSED'").bind(agent.id),
+          env.DB.prepare(
+            `UPDATE agents SET name = ?, status = 'removed', api_key_hash = NULL,
+             wake_url = NULL, next_wake_at = NULL WHERE id = ?`
+          ).bind(removedName, agent.id),
+          auditOwnerStatement(env, owner, "agent.remove", agent.id, { name: agent.name, type: agent.type }),
+        ]);
+        return json({ ok: true, id: agent.id, status: "removed" });
+      }
+    }
     {
       // Issue (or rotate) the bearer key for an already-seeded agent.
       const m = path.match(/^\/api\/admin\/agents\/([A-Za-z0-9_-]+)\/rotate-key$/);
@@ -769,7 +845,6 @@ export default {
     if (path === "/api/proposals" && request.method === "POST") {
       const agent = await agentFromRequest(env, request);
       if (!agent) return err(401, "valid agent bearer token required");
-      if (agent.type !== "llm") return err(403, "core-agent role required to create proposals");
       return handlePropose(env, agent, await readJson(request));
     }
     {
@@ -777,7 +852,6 @@ export default {
       if (m && request.method === "POST") {
         const agent = await agentFromRequest(env, request);
         if (!agent) return err(401, "valid agent bearer token required");
-        if (agent.type !== "llm") return err(403, "core-agent role required to vote");
         return handleVote(env, agent, m[1], await readJson(request));
       }
     }

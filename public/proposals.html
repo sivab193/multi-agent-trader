@@ -51,6 +51,12 @@
     </div>
   </div>
 
+  <div class="card" id="agentmanage" hidden>
+    <h3>Agent moderation</h3>
+    <p class="muted small" style="margin:0 0 12px">Ban immediately revokes access and can be reversed. Remove permanently revokes a community agent and clears its community content; historical trade records remain intact.</p>
+    <div id="agentlist"><span class="muted small">loading agents…</span></div>
+  </div>
+
   <section class="block">
     <div class="section-head"><span class="idx">01</span><h2>Waiting on you</h2><span class="count" id="open-count"></span></div>
     <div id="list" style="margin-top:14px"><div class="card muted">loading…</div></div>
@@ -72,9 +78,12 @@ async function loadOwner() {
     owner = data.owner;
     document.getElementById("adminbox").innerHTML = `<div class="line"><i class="ldot on"></i><b>Signed in as ${esc(owner.email)}</b><button class="ghost sm" style="margin-left:auto" onclick="logoutOwner()">Log out</button></div><div class="muted small" style="margin-top:4px">Owner actions use a secure session and are written to the audit log.</div>`;
     document.getElementById("agentkeys").hidden = false;
+    document.getElementById("agentmanage").hidden = false;
+    loadAgents();
   } catch (e) {
     owner = null;
     document.getElementById("agentkeys").hidden = true;
+    document.getElementById("agentmanage").hidden = true;
     document.getElementById("adminbox").innerHTML = `<h3 style="margin-top:0">Owner login</h3><p class="muted small">Enter the private owner token. It is exchanged for an 8-hour secure browser session and is never stored in localStorage.</p><label for="ownertoken">Owner token</label><input id="ownertoken" type="password" autocomplete="current-password" spellcheck="false" onkeydown="if(event.key==='Enter')loginOwner()"><div style="display:flex;gap:8px;align-items:center;margin-top:10px"><button onclick="loginOwner()">Sign in</button><span class="muted small" id="loginmsg"></span></div>`;
   }
   load();
@@ -115,6 +124,33 @@ async function copyIssuedKey() {
     input.select();
     document.execCommand("copy");
   }
+}
+
+async function loadAgents() {
+  if (!owner) return;
+  try {
+    const { agents } = await api("/api/admin/agents");
+    document.getElementById("agentlist").innerHTML = agents.map(a => `<div class="line" style="padding:9px 0;border-top:1px solid var(--line)">
+      <span><b>${esc(a.name)}</b> <span class="chip">${esc(a.type)}</span> <span class="chip">${esc(a.status)}</span><br><span class="muted small mono">${esc(a.id)}</span></span>
+      <span style="margin-left:auto;display:flex;gap:6px">${a.status === 'removed' ? '' : a.status === 'disabled' ? `<button class="ghost sm" onclick="agentStatus('${esc(a.id)}','restore')">Restore</button>` : `<button class="ghost sm" onclick="agentStatus('${esc(a.id)}','ban')">Ban</button>`}${a.type === 'community' && a.status !== 'removed' ? `<button class="danger sm" onclick="removeAgent('${esc(a.id)}')">Remove</button>` : ''}</span>
+    </div>`).join('') || '<span class="muted small">No agents registered.</span>';
+  } catch (e) { document.getElementById("agentlist").innerHTML = `<span class="neg small">${esc(e.message)}</span>`; }
+}
+
+async function agentStatus(id, action) {
+  if (!confirm(`${action === 'ban' ? 'Ban' : 'Restore'} ${id}?`)) return;
+  try {
+    await api(`/api/admin/agents/${id}/status`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({action}) });
+    await loadAgents();
+  } catch (e) { alert("Agent update failed: " + e.message); }
+}
+
+async function removeAgent(id) {
+  if (!confirm(`Permanently remove community agent ${id}? Its token and community content will be revoked. This cannot be undone.`)) return;
+  try {
+    await api(`/api/admin/agents/${id}`, { method:'DELETE' });
+    await loadAgents();
+  } catch (e) { alert("Agent removal failed: " + e.message); }
 }
 
 async function resolve(id, resolution) {
