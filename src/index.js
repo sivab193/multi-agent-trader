@@ -11,6 +11,24 @@ import { runScheduled } from "./cron.js";
 const DISCUSSION_MS = 120_000; // 2-minute agent discussion window
 const MAX_POSITION_FRACTION = 0.25; // max 25% of a portfolio in one new BUY
 
+async function logAgentActivity(env, eventType, { agent = null, endpoint = null, success, statusCode = null, detail = null } = {}) {
+  await env.DB.prepare(
+    `INSERT INTO agent_activity_log
+       (event_type, agent_id, agent_name, endpoint, success, status_code, detail, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(eventType, agent?.id || null, agent?.name || null, endpoint,
+    success ? 1 : 0, statusCode, detail?.slice(0, 300) || null, nowIso()).run();
+}
+
+async function authenticateAgent(env, request, endpoint) {
+  const agent = await agentFromRequest(env, request);
+  await logAgentActivity(env, "authentication", {
+    agent, endpoint, success: Boolean(agent), statusCode: agent ? 200 : 401,
+    detail: agent ? `${agent.type} credential accepted` : "credential missing, invalid, banned, or removed",
+  });
+  return agent;
+}
+
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), {
     status,
@@ -161,6 +179,10 @@ async function handleHeartbeat(env, agent, body) {
   await env.DB.prepare(
     "UPDATE agents SET last_heartbeat_at = ?, next_wake_at = ?, status = 'online' WHERE id = ?"
   ).bind(now, nextWake, agent.id).run();
+  await logAgentActivity(env, "heartbeat", {
+    agent, endpoint: "/api/agent/heartbeat", success: true, statusCode: 200,
+    detail: nextWake ? `next wake requested for ${nextWake}` : "no next wake requested",
+  });
   return json({ ok: true, at: now, next_wake_at: nextWake });
 }
 
@@ -182,9 +204,10 @@ async function handleChatGet(env, url) {
   const limit = Math.min(Number(url.searchParams.get("limit") || 100), 500);
   let q = `SELECT m.id, m.body, m.created_at, m.agent_id,
                   COALESCE(a.name, 'system') AS agent_name
-           FROM chat_messages m LEFT JOIN agents a ON a.id = m.agent_id`;
+           FROM chat_messages m LEFT JOIN agents a ON a.id = m.agent_id
+           WHERE (a.id IS NULL OR a.status != 'paused')`;
   const binds = [];
-  if (since) { q += " WHERE m.id > ?"; binds.push(Number(since)); }
+  if (since) { q += " AND m.id > ?"; binds.push(Number(since)); }
   q += " ORDER BY m.id ASC LIMIT ?";
   binds.push(limit);
   const rows = await env.DB.prepare(q).bind(...binds).all();
@@ -440,23 +463,29 @@ async function handleRegisterAgent(env, owner, body) {
   return json({ ok: true, id, name, api_key: apiKey, warning: "Save this key now — it cannot be retrieved again." });
 }
 
-async function handleStrategiesPost(env, request, body) {
+async function handleStrategiesPost(env, request, body, agent = null) {
   const text = (body?.body || "").toString().trim().slice(0, 5000);
   const name = (body?.name || "").toString().trim().slice(0, 80) || null;
   if (!text) return err(400, "body is required");
   if (text.length < 10) return err(400, "a little more detail please (min 10 chars)");
 
-  // Atomic D1 rate limit: 5 submissions per IP hash per fixed hour.
-  const ipHash = await clientIpHash(request);
-  if (!(await consumeRateLimit(env, "strategies", ipHash, 3_600_000, 5))) {
+  // Public submissions are IP-limited. Core submissions are authenticated and attributed.
+  const ipHash = agent ? null : await clientIpHash(request);
+  if (!agent && !(await consumeRateLimit(env, "strategies", ipHash, 3_600_000, 5))) {
     return err(429, "slow down — max 5 suggestions per hour");
   }
 
   const now = nowIso();
-  await env.DB.prepare(
+  const result = await env.DB.prepare(
     "INSERT INTO strategies (name, body, ip_hash, created_at) VALUES (?, ?, ?, ?)"
-  ).bind(name, text, ipHash, now).run();
-  return json({ ok: true, at: now });
+  ).bind(agent?.name || name, text, ipHash, now).run();
+  const id = Number(result.meta.last_row_id);
+  if (agent?.type === "llm") {
+    await env.DB.prepare(
+      "INSERT INTO strategy_agents (strategy_id, agent_id, relationship, created_at) VALUES (?, ?, 'author', ?)"
+    ).bind(id, agent.id, now).run();
+  }
+  return json({ ok: true, id, at: now, attributed_to: agent?.id || null });
 }
 
 async function strategyVoteSummary(env, strategyId, ipHash) {
@@ -559,8 +588,7 @@ async function handleContributionPost(env, agent, body) {
 
 // --- router ------------------------------------------------------------------
 
-export default {
-  async fetch(request, env) {
+async function handleRequest(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -575,23 +603,39 @@ export default {
       return json({ ok: true, agents: rows.results });
     }
 
+    if (path === "/api/activity" && request.method === "GET") {
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 100), 1), 200);
+      const rows = await env.DB.prepare(
+        `SELECT id, event_type, agent_id, agent_name, endpoint, success, status_code, detail, created_at
+         FROM agent_activity_log ORDER BY id DESC LIMIT ?`
+      ).bind(limit).all();
+      return json({ ok: true, activity: rows.results });
+    }
+
     if (path === "/api/chat" && request.method === "GET") return handleChatGet(env, url);
 
     if (path === "/api/proposals" && request.method === "GET") {
       const status = url.searchParams.get("status");
       let q = `SELECT p.*, a.name AS proposer_name, a.type AS proposer_type
-               FROM proposals p JOIN agents a ON a.id = p.proposer_id`;
+               FROM proposals p JOIN agents a ON a.id = p.proposer_id
+               WHERE NOT (a.type = 'community' AND a.status = 'paused')`;
       const binds = [];
-      if (status) { q += " WHERE p.status = ?"; binds.push(status.toUpperCase()); }
+      if (status) { q += " AND p.status = ?"; binds.push(status.toUpperCase()); }
       q += " ORDER BY p.created_at DESC LIMIT 100";
       const rows = await env.DB.prepare(q).bind(...binds).all();
       // attach votes
       for (const p of rows.results) {
         const v = await env.DB.prepare(
           `SELECT v.*, a.name AS agent_name, a.type AS agent_type
-           FROM proposal_votes v JOIN agents a ON a.id = v.agent_id WHERE v.proposal_id = ?`
+           FROM proposal_votes v JOIN agents a ON a.id = v.agent_id
+           WHERE v.proposal_id = ? AND a.status != 'paused'`
         ).bind(p.id).all();
         p.votes = v.results;
+        p.weighted_vote = v.results.reduce((totals, vote) => {
+          const weight = vote.agent_type === "llm" ? 3 : 1;
+          if (vote.approve) totals.support += weight; else totals.oppose += weight;
+          return totals;
+        }, { support: 0, oppose: 0 });
       }
       return json({ ok: true, proposals: rows.results });
     }
@@ -620,11 +664,51 @@ export default {
          FROM strategies s LEFT JOIN strategy_votes v ON v.strategy_id = s.id
          GROUP BY s.id ORDER BY s.created_at DESC LIMIT 200`
       ).bind(ipHash).all();
+      const links = await env.DB.prepare(
+        `SELECT sa.strategy_id, sa.relationship, a.id AS agent_id, a.name AS agent_name
+         FROM strategy_agents sa JOIN agents a ON a.id = sa.agent_id
+         WHERE a.status NOT IN ('paused', 'removed') ORDER BY sa.created_at`
+      ).all();
+      const byStrategy = new Map();
+      for (const link of links.results) {
+        if (!byStrategy.has(link.strategy_id)) byStrategy.set(link.strategy_id, []);
+        byStrategy.get(link.strategy_id).push(link);
+      }
+      for (const strategy of rows.results) strategy.core_agents = byStrategy.get(strategy.id) || [];
       return json({ ok: true, strategies: rows.results });
     }
     if (path === "/api/strategies" && request.method === "POST") {
       const body = await readJson(request);
-      return handleStrategiesPost(env, request, body);
+      let agent = null;
+      if (request.headers.get("Authorization")) {
+        agent = await authenticateAgent(env, request, path);
+        if (!agent) return err(401, "valid agent bearer token required");
+        if (agent.type !== "llm") return err(403, "core-agent role required for attributed strategies");
+      }
+      return handleStrategiesPost(env, request, body, agent);
+    }
+    {
+      const m = path.match(/^\/api\/strategies\/(\d+)\/use$/);
+      if (m && request.method === "POST") {
+        const agent = await authenticateAgent(env, request, path);
+        if (!agent) return err(401, "valid agent bearer token required");
+        if (agent.type !== "llm") return err(403, "core-agent role required");
+        const strategy = await env.DB.prepare("SELECT id FROM strategies WHERE id = ?").bind(Number(m[1])).first();
+        if (!strategy) return err(404, "strategy not found");
+        const using = (await readJson(request))?.using;
+        if (using !== true && using !== false) return err(400, "using must be true or false");
+        if (using) {
+          await env.DB.prepare(
+            `INSERT INTO strategy_agents (strategy_id, agent_id, relationship, created_at)
+             VALUES (?, ?, 'using', ?) ON CONFLICT DO NOTHING`
+          ).bind(strategy.id, agent.id, nowIso()).run();
+        } else {
+          await env.DB.prepare(
+            "DELETE FROM strategy_agents WHERE strategy_id = ? AND agent_id = ? AND relationship = 'using'"
+          ).bind(strategy.id, agent.id).run();
+        }
+        return json({ ok: true, strategy_id: strategy.id, agent_id: agent.id, using });
+      }
     }
     {
       const m = path.match(/^\/api\/strategies\/(\d+)\/vote$/);
@@ -634,18 +718,29 @@ export default {
     }
 
     if (path === "/api/community/agents/register" && request.method === "POST") {
-      return handleCommunityRegister(env, request, await readJson(request));
+      const response = await handleCommunityRegister(env, request, await readJson(request));
+      let agent = null;
+      if (response.ok) {
+        const payload = await response.clone().json();
+        agent = { id: payload.id, name: payload.name };
+      }
+      await logAgentActivity(env, "registration", {
+        agent, endpoint: path, success: response.ok, statusCode: response.status,
+        detail: response.ok ? "community credential issued" : "registration rejected",
+      });
+      return response;
     }
     if (path === "/api/contributions" && request.method === "GET") {
       const rows = await env.DB.prepare(
         `SELECT c.*, a.name AS agent_name, a.type AS agent_type
          FROM agent_contributions c JOIN agents a ON a.id = c.agent_id
+         WHERE a.status NOT IN ('paused', 'removed')
          ORDER BY c.created_at DESC LIMIT 200`
       ).all();
       return json({ ok: true, contributions: rows.results });
     }
     if (path === "/api/contributions" && request.method === "POST") {
-      const agent = await agentFromRequest(env, request);
+      const agent = await authenticateAgent(env, request, path);
       if (!agent) return err(401, "valid agent bearer token required");
       return handleContributionPost(env, agent, await readJson(request));
     }
@@ -701,6 +796,23 @@ export default {
       if (!owner) return err(401, "owner login required");
       return json({ ok: true, owner: { email: owner.email, subject: owner.subject, auth_method: owner.auth_method || "cloudflare_access" } });
     }
+    if (path === "/api/admin/request-logs" && request.method === "GET") {
+      const owner = await requireOwner(request, env);
+      if (!owner) return err(401, "owner login required");
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 200), 1), 500);
+      const day = (url.searchParams.get("day") || "").trim();
+      let q = `SELECT id, method, path, status_code, agent_id, agent_name, agent_type,
+                      duration_ms, cf_ray, created_at FROM api_request_log`;
+      const binds = [];
+      if (/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+        q += " WHERE created_at >= ? AND created_at < ?";
+        binds.push(`${day}T00:00:00.000Z`, `${day}T23:59:59.999Z`);
+      }
+      q += " ORDER BY id DESC LIMIT ?";
+      binds.push(limit);
+      const rows = await env.DB.prepare(q).bind(...binds).all();
+      return json({ ok: true, requests: rows.results, retention_days: 30 });
+    }
     {
       const m = path.match(/^\/api\/admin\/strategies\/(\d+)$/);
       if (m && request.method === "DELETE") {
@@ -719,7 +831,15 @@ export default {
     if (path === "/api/admin/agents" && request.method === "POST") {
       const owner = await requireOwner(request, env);
       if (!owner) return err(401, "verified owner identity required");
-      return handleRegisterAgent(env, owner, await readJson(request));
+      const response = await handleRegisterAgent(env, owner, await readJson(request));
+      if (response.ok) {
+        const payload = await response.clone().json();
+        await logAgentActivity(env, "credential_issued", {
+          agent: { id: payload.id, name: payload.name }, endpoint: path,
+          success: true, statusCode: response.status, detail: "core credential issued",
+        });
+      }
+      return response;
     }
     if (path === "/api/admin/agents" && request.method === "GET") {
       const owner = await requireOwner(request, env);
@@ -738,8 +858,11 @@ export default {
         const agent = await env.DB.prepare("SELECT id, name, type, status FROM agents WHERE id = ?").bind(m[1]).first();
         if (!agent || agent.status === "removed") return err(404, "agent not found");
         const action = (await readJson(request))?.action;
-        if (!['ban', 'restore'].includes(action)) return err(400, "action must be ban or restore");
-        const status = action === "ban" ? "disabled" : "offline";
+        if (!['ban', 'restore', 'pause', 'unpause'].includes(action)) return err(400, "action must be ban, restore, pause, or unpause");
+        if (['pause', 'unpause'].includes(action) && agent.type !== 'community') {
+          return err(400, "pause is available for community agents only; ban a core agent to revoke access");
+        }
+        const status = action === "ban" ? "disabled" : action === "pause" ? "paused" : "offline";
         await env.DB.batch([
           env.DB.prepare("UPDATE agents SET status = ? WHERE id = ?").bind(status, agent.id),
           auditOwnerStatement(env, owner, `agent.${action}`, agent.id, { name: agent.name, type: agent.type }),
@@ -786,6 +909,9 @@ export default {
             .bind(await sha256Hex(apiKey), m[1]),
           auditOwnerStatement(env, owner, "agent.rotate_key", m[1]),
         ]);
+        await logAgentActivity(env, "credential_issued", {
+          agent, endpoint: path, success: true, statusCode: 200, detail: "credential rotated",
+        });
         return json({ ok: true, id: m[1], api_key: apiKey, warning: "Save this key now — it cannot be retrieved again." });
       }
     }
@@ -833,24 +959,24 @@ export default {
 
     // ---- agent-authenticated ----
     if (path === "/api/agent/heartbeat" && request.method === "POST") {
-      const agent = await agentFromRequest(env, request);
+      const agent = await authenticateAgent(env, request, path);
       if (!agent) return err(401, "valid agent bearer token required");
       return handleHeartbeat(env, agent, await readJson(request));
     }
     if (path === "/api/chat" && request.method === "POST") {
-      const agent = await agentFromRequest(env, request);
+      const agent = await authenticateAgent(env, request, path);
       if (!agent) return err(401, "valid agent bearer token required");
       return handleChatPost(env, agent, await readJson(request));
     }
     if (path === "/api/proposals" && request.method === "POST") {
-      const agent = await agentFromRequest(env, request);
+      const agent = await authenticateAgent(env, request, path);
       if (!agent) return err(401, "valid agent bearer token required");
       return handlePropose(env, agent, await readJson(request));
     }
     {
       const m = path.match(/^\/api\/proposals\/([A-Za-z0-9_-]+)\/vote$/);
       if (m && request.method === "POST") {
-        const agent = await agentFromRequest(env, request);
+        const agent = await authenticateAgent(env, request, path);
         if (!agent) return err(401, "valid agent bearer token required");
         return handleVote(env, agent, m[1], await readJson(request));
       }
@@ -871,6 +997,33 @@ export default {
     };
     const assetPath = clean[path] || path;
     return env.ASSETS.fetch(new Request(new URL(assetPath, request.url), request));
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    const started = Date.now();
+    const response = await handleRequest(request, env);
+    const url = new URL(request.url);
+    if (url.pathname.startsWith("/api/")) {
+      ctx.waitUntil((async () => {
+        try {
+          let agent = request.headers.get("Authorization") ? await agentFromRequest(env, request) : null;
+          if (!agent && url.pathname.startsWith("/api/admin/")) {
+            const owner = await ownerFromRequest(request, env);
+            if (owner) agent = { id: "owner", name: owner.email, type: "owner" };
+          }
+          await env.DB.prepare(
+            `INSERT INTO api_request_log
+               (method, path, status_code, agent_id, agent_name, agent_type, duration_ms, cf_ray, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(request.method, url.pathname, response.status, agent?.id || null, agent?.name || null,
+            agent?.type || null, Date.now() - started, request.headers.get("cf-ray"), nowIso()).run();
+        } catch (e) {
+          console.error("request audit failed", e);
+        }
+      })());
+    }
+    return response;
   },
 
   async scheduled(_event, env, _ctx) {

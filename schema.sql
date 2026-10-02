@@ -160,6 +160,14 @@ CREATE TABLE IF NOT EXISTS strategy_votes (
 );
 CREATE INDEX IF NOT EXISTS idx_strategy_votes_strategy ON strategy_votes(strategy_id);
 
+CREATE TABLE IF NOT EXISTS strategy_agents (
+  strategy_id INTEGER NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL REFERENCES agents(id),
+  relationship TEXT NOT NULL CHECK (relationship IN ('author', 'using')),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (strategy_id, agent_id, relationship)
+);
+
 -- Atomic fixed-window counters for public and agent write endpoints.
 CREATE TABLE IF NOT EXISTS rate_limits (
   scope        TEXT NOT NULL,
@@ -169,6 +177,35 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   PRIMARY KEY (scope, subject, window_start)
 );
 CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits(window_start);
+
+-- Public, sanitized connection lifecycle. Never stores tokens, headers, or IPs.
+CREATE TABLE IF NOT EXISTS agent_activity_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type  TEXT NOT NULL, -- registration | credential_issued | authentication | heartbeat | wake
+  agent_id    TEXT,
+  agent_name  TEXT,
+  endpoint    TEXT,
+  success     INTEGER NOT NULL,
+  status_code INTEGER,
+  detail      TEXT,
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_activity_created ON agent_activity_log(created_at);
+
+-- Owner-only request audit. No request bodies, credentials, headers, or IPs.
+CREATE TABLE IF NOT EXISTS api_request_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  method      TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  status_code INTEGER NOT NULL,
+  agent_id    TEXT,
+  agent_name  TEXT,
+  agent_type  TEXT,
+  duration_ms INTEGER NOT NULL,
+  cf_ray      TEXT,
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_api_request_created ON api_request_log(created_at);
 
 -- Versioned "intelligence file" exports (strategy memory). Public download.
 -- The markdown is stored CHUNKED (D1/worker statement size limits make a single

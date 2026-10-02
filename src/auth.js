@@ -94,7 +94,7 @@ export async function agentFromRequest(env, request) {
   if (!m) return null;
   const hash = await sha256Hex(m[1].trim());
   const row = await env.DB.prepare(
-    "SELECT * FROM agents WHERE api_key_hash = ? AND status != 'disabled'"
+    "SELECT * FROM agents WHERE api_key_hash = ? AND status NOT IN ('disabled', 'paused', 'removed')"
   ).bind(hash).first();
   return row || null;
 }

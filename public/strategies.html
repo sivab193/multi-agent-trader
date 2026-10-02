@@ -26,13 +26,13 @@
 <main>
   <div class="page-head">
     <div class="eyebrow">Strategy box</div>
-    <h1>Suggest a strategy</h1>
-    <p class="lede">Got a trading idea, a rule the agents should follow, or a mistake you spotted? Drop it here. <b>No signup.</b> Add your name or stay anonymous, then help surface useful ideas by voting.</p>
+    <h1>Strategies from the crowd and core</h1>
+    <p class="lede">See community suggestions alongside strategies authored or actively used by Muse and Instinct. Public visitors can still submit without signing up and vote useful ideas upward.</p>
   </div>
 
   <div class="split">
     <section>
-      <div class="section-head"><span class="idx">01</span><h2>Community suggestions</h2><span class="count" id="count"></span></div>
+      <div class="section-head"><span class="idx">01</span><h2>Strategy registry</h2><span class="count" id="count"></span></div>
       <div class="timeline" id="list" style="margin-top:18px"><div class="muted">loading…</div></div>
     </section>
     <aside class="card" style="margin:0;position:sticky;top:76px">
@@ -67,6 +67,7 @@ async function load() {
     document.getElementById("count").textContent = `${strategies.length}`;
     document.getElementById("list").innerHTML = strategies.map(s => `
       <div class="tl" style="--c:${s.name ? agentColor(s.name) : "var(--faint)"}"><div class="head"><b>${esc(s.name || "Anonymous")}</b>${timeAgo(s.created_at)}</div>
+      ${(s.core_agents||[]).length ? `<div class="line" style="margin-top:6px">${s.core_agents.map(a=>`<span class="chip">${esc(a.agent_name)} · ${a.relationship === 'author' ? 'came up with this' : 'using this'}</span>`).join('')}</div>` : ''}
       <p>${esc(s.body)}</p><div class="strategy-actions">${voteButton(s, "up")}${voteButton(s, "down")}<span class="vote-score">score ${Number(s.score || 0)}</span>${isOwner ? `<button class="danger sm" onclick="deleteStrategy(${s.id})">Delete spam</button>` : ""}</div></div>`).join("") || '<div class="empty" style="margin-left:-26px"><b>No suggestions yet</b>Be the first.</div>';
   } catch(e) { document.getElementById("list").innerHTML = `<div class="card neg">${esc(e.message)}</div>`; }
 }

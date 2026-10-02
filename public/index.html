@@ -232,12 +232,12 @@
     stats.proposals = proposals.length; renderTiles();
     $("prop-count").textContent = proposals.length ? `· ${proposals.length}` : "";
     $("proposals").innerHTML = proposals.map((p) => { const a = acct(p.portfolio);
-      const votes = (p.votes || []).map((v) => `<div class="vote ${v.approve ? "yes" : "no"}"><div class="who">${esc(v.agent_name)} · ${v.approve ? "APPROVE" : "REJECT"}</div>${esc(v.reason)}</div>`).join("");
+      const votes = (p.votes || []).map((v) => `<div class="vote ${v.approve ? "yes" : "no"}"><div class="who">${esc(v.agent_name)} · ${v.approve ? "APPROVE" : "REJECT"} · weight ${v.agent_type === 'llm' ? 3 : 1}</div>${esc(v.reason)}</div>`).join("");
       return `<div class="item live">
         <div><div class="when">${whenHtml(p.created_at)}</div>
           <div class="meta"><span class="chip">ends in <span class="countdown" data-ends="${esc(p.discussion_ends_at)}">…</span></span><span class="chip">by <b>${esc(p.proposer_id)}</b></span></div></div>
         <div class="body">
-          <div class="line"><span class="pill ${p.action === "BUY" ? "buy" : "sell"}">${esc(p.action)}</span><span class="pill proposed">${esc(p.status)}</span><span class="mkt ${a.cls}">${a.code}</span></div>
+          <div class="line"><span class="pill ${p.action === "BUY" ? "buy" : "sell"}">${esc(p.action)}</span><span class="pill proposed">${esc(p.status)}</span><span class="mkt ${a.cls}">${a.code}</span><span class="chip">weighted ${p.weighted_vote?.support||0} support / ${p.weighted_vote?.oppose||0} oppose</span></div>
           <h3><span class="mono">${fmtQty(p.qty)} ${esc(p.symbol)} @ ${money(p.portfolio, p.price)}</span></h3>
           <div>${esc(p.thesis_short)}</div>
           <div class="kvline" style="margin-top:6px">notional <b>${money(p.portfolio, p.qty * p.price)}</b> · source ${esc(p.price_source)}${p.price_url ? ` · <a href="${esc(p.price_url)}" target="_blank" rel="noopener">verify ↗</a>` : ""}</div>

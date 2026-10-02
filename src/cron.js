@@ -15,6 +15,14 @@ async function systemChat(env, body) {
   ).bind(body, now).run();
 }
 
+async function logWake(env, agent, success, statusCode, detail) {
+  await env.DB.prepare(
+    `INSERT INTO agent_activity_log
+       (event_type, agent_id, agent_name, endpoint, success, status_code, detail, created_at)
+     VALUES ('wake', ?, ?, 'wake_url', ?, ?, ?, ?)`
+  ).bind(agent.id, agent.name, success ? 1 : 0, statusCode, detail.slice(0, 300), new Date().toISOString()).run();
+}
+
 async function expireDiscussions(env, now) {
   const expired = await env.DB.prepare(
     "SELECT * FROM proposals WHERE status = 'PROPOSED' AND discussion_ends_at <= ?"
@@ -44,7 +52,7 @@ async function wakeDueAgents(env, now) {
   const due = await env.DB.prepare(
     `SELECT id, name, wake_url FROM agents
      WHERE wake_url IS NOT NULL AND next_wake_at IS NOT NULL AND next_wake_at <= ?
-       AND status != 'disabled'
+       AND status NOT IN ('disabled', 'paused', 'removed')
        AND (last_wake_attempt_at IS NULL OR last_wake_attempt_at <= ?)`
   ).bind(now, oneMinAgo).all();
 
@@ -69,11 +77,13 @@ async function wakeDueAgents(env, now) {
       await env.DB.prepare(
         "UPDATE agents SET last_wake_attempt_at = ?, wake_failures = 0 WHERE id = ?"
       ).bind(now, a.id).run();
+      await logWake(env, a, true, res.status, "scheduled wake webhook accepted");
     } catch (e) {
       failed++;
       await env.DB.prepare(
         "UPDATE agents SET last_wake_attempt_at = ?, wake_failures = wake_failures + 1 WHERE id = ?"
       ).bind(now, a.id).run();
+      await logWake(env, a, false, null, String(e && e.message || e));
       await systemChat(env, `⚠️ Wake nudge to ${a.name} failed (${String(e && e.message || e)}). It stays on its own poll loop.`);
     }
   }
@@ -86,5 +96,9 @@ export async function runScheduled(env) {
   const wake = await wakeDueAgents(env, now);
   await env.DB.prepare("DELETE FROM rate_limits WHERE window_start < ?")
     .bind(Date.now() - 7_200_000).run();
+  await env.DB.prepare("DELETE FROM agent_activity_log WHERE created_at < ?")
+    .bind(new Date(Date.now() - 30 * 86_400_000).toISOString()).run();
+  await env.DB.prepare("DELETE FROM api_request_log WHERE created_at < ?")
+    .bind(new Date(Date.now() - 30 * 86_400_000).toISOString()).run();
   return { at: now, discussions_escalated: escalated, wake_attempted: wake.attempted, wake_failed: wake.failed };
 }

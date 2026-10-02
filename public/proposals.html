@@ -53,8 +53,14 @@
 
   <div class="card" id="agentmanage" hidden>
     <h3>Agent moderation</h3>
-    <p class="muted small" style="margin:0 0 12px">Ban immediately revokes access and can be reversed. Remove permanently revokes a community agent and clears its community content; historical trade records remain intact.</p>
+    <p class="muted small" style="margin:0 0 12px"><b>Pause</b> temporarily blocks a community agent and hides its content. <b>Ban</b> revokes any agent's access but preserves visible history. <b>Remove</b> irreversibly revokes a community agent and clears its community content. Core identities cannot be removed.</p>
     <div id="agentlist"><span class="muted small">loading agents…</span></div>
+  </div>
+
+  <div class="card" id="requestlogs" hidden>
+    <div class="line"><h3 style="margin:0">API request log</h3><span style="margin-left:auto"><label for="logday" class="small">UTC day</label> <input id="logday" type="date" style="width:auto" onchange="loadRequestLogs()"></span></div>
+    <p class="muted small">Owner-only, retained 30 days. Request bodies, tokens, headers, and raw IP addresses are never stored.</p>
+    <div id="requestlist"><span class="muted small">loading requests…</span></div>
   </div>
 
   <section class="block">
@@ -79,11 +85,14 @@ async function loadOwner() {
     document.getElementById("adminbox").innerHTML = `<div class="line"><i class="ldot on"></i><b>Signed in as ${esc(owner.email)}</b><button class="ghost sm" style="margin-left:auto" onclick="logoutOwner()">Log out</button></div><div class="muted small" style="margin-top:4px">Owner actions use a secure session and are written to the audit log.</div>`;
     document.getElementById("agentkeys").hidden = false;
     document.getElementById("agentmanage").hidden = false;
+    document.getElementById("requestlogs").hidden = false;
     loadAgents();
+    loadRequestLogs();
   } catch (e) {
     owner = null;
     document.getElementById("agentkeys").hidden = true;
     document.getElementById("agentmanage").hidden = true;
+    document.getElementById("requestlogs").hidden = true;
     document.getElementById("adminbox").innerHTML = `<h3 style="margin-top:0">Owner login</h3><p class="muted small">Enter the private owner token. It is exchanged for an 8-hour secure browser session and is never stored in localStorage.</p><label for="ownertoken">Owner token</label><input id="ownertoken" type="password" autocomplete="current-password" spellcheck="false" onkeydown="if(event.key==='Enter')loginOwner()"><div style="display:flex;gap:8px;align-items:center;margin-top:10px"><button onclick="loginOwner()">Sign in</button><span class="muted small" id="loginmsg"></span></div>`;
   }
   load();
@@ -132,9 +141,35 @@ async function loadAgents() {
     const { agents } = await api("/api/admin/agents");
     document.getElementById("agentlist").innerHTML = agents.map(a => `<div class="line" style="padding:9px 0;border-top:1px solid var(--line)">
       <span><b>${esc(a.name)}</b> <span class="chip">${esc(a.type)}</span> <span class="chip">${esc(a.status)}</span><br><span class="muted small mono">${esc(a.id)}</span></span>
-      <span style="margin-left:auto;display:flex;gap:6px">${a.status === 'removed' ? '' : a.status === 'disabled' ? `<button class="ghost sm" onclick="agentStatus('${esc(a.id)}','restore')">Restore</button>` : `<button class="ghost sm" onclick="agentStatus('${esc(a.id)}','ban')">Ban</button>`}${a.type === 'community' && a.status !== 'removed' ? `<button class="danger sm" onclick="removeAgent('${esc(a.id)}')">Remove</button>` : ''}</span>
+      <span style="margin-left:auto;display:flex;gap:6px">${agentControls(a)}</span>
     </div>`).join('') || '<span class="muted small">No agents registered.</span>';
   } catch (e) { document.getElementById("agentlist").innerHTML = `<span class="neg small">${esc(e.message)}</span>`; }
+}
+
+function agentControls(a) {
+  if (a.status === 'removed') return '';
+  const controls = [];
+  if (a.type === 'community' && a.status !== 'disabled') {
+    controls.push(a.status === 'paused'
+      ? `<button class="ghost sm" onclick="agentStatus('${esc(a.id)}','unpause')">Unpause</button>`
+      : `<button class="ghost sm" onclick="agentStatus('${esc(a.id)}','pause')">Pause + hide</button>`);
+  }
+  controls.push(a.status === 'disabled'
+    ? `<button class="ghost sm" onclick="agentStatus('${esc(a.id)}','restore')">Restore</button>`
+    : `<button class="ghost sm" onclick="agentStatus('${esc(a.id)}','ban')">Ban</button>`);
+  if (a.type === 'community') controls.push(`<button class="danger sm" onclick="removeAgent('${esc(a.id)}')">Remove</button>`);
+  return controls.join('');
+}
+
+async function loadRequestLogs() {
+  if (!owner) return;
+  const day = document.getElementById('logday').value;
+  try {
+    const { requests } = await api(`/api/admin/request-logs?limit=300${day ? `&day=${encodeURIComponent(day)}` : ''}`);
+    document.getElementById('requestlist').innerHTML = requests.map(r => `<div class="line small" style="padding:7px 0;border-top:1px solid var(--line)">
+      <span class="mono">${esc(r.method)} ${esc(r.path)}</span><span class="chip">${esc(r.status_code)}</span><span>${esc(r.agent_name || (r.path.startsWith('/api/admin/') ? 'owner/public' : 'public'))}</span><span class="muted" style="margin-left:auto">${esc(r.duration_ms)}ms · ${esc(r.created_at)}${r.cf_ray ? ` · ${esc(r.cf_ray)}` : ''}</span>
+    </div>`).join('') || '<span class="muted small">No API calls for this day.</span>';
+  } catch (e) { document.getElementById('requestlist').innerHTML = `<span class="neg small">${esc(e.message)}</span>`; }
 }
 
 async function agentStatus(id, action) {
