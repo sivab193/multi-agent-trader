@@ -430,6 +430,44 @@ async function handleStrategiesPost(env, request, body) {
   return json({ ok: true, at: now });
 }
 
+async function strategyVoteSummary(env, strategyId, ipHash) {
+  return env.DB.prepare(
+    `SELECT
+       COALESCE(SUM(CASE WHEN vote = 1 THEN 1 ELSE 0 END), 0) AS upvotes,
+       COALESCE(SUM(CASE WHEN vote = -1 THEN 1 ELSE 0 END), 0) AS downvotes,
+       COALESCE(SUM(vote), 0) AS score,
+       COALESCE(MAX(CASE WHEN ip_hash = ? THEN vote ELSE 0 END), 0) AS my_vote
+     FROM strategy_votes WHERE strategy_id = ?`
+  ).bind(ipHash, strategyId).first();
+}
+
+async function handleStrategyVote(env, request, strategyId, body) {
+  const id = Number(strategyId);
+  if (!Number.isSafeInteger(id) || id < 1) return err(400, "invalid strategy id");
+  const requested = String(body?.vote || "").toLowerCase();
+  const vote = requested === "up" ? 1 : requested === "down" ? -1 : requested === "none" ? 0 : null;
+  if (vote == null) return err(400, "vote must be up, down, or none");
+  if (!(await env.DB.prepare("SELECT id FROM strategies WHERE id = ?").bind(id).first())) {
+    return err(404, "strategy not found");
+  }
+  const ipHash = await clientIpHash(request);
+  if (!(await consumeRateLimit(env, "strategy_votes", ipHash, 3_600_000, 30))) {
+    return err(429, "vote change limit exceeded — try again next hour");
+  }
+  if (vote === 0) {
+    await env.DB.prepare("DELETE FROM strategy_votes WHERE strategy_id = ? AND ip_hash = ?")
+      .bind(id, ipHash).run();
+  } else {
+    const now = nowIso();
+    await env.DB.prepare(
+      `INSERT INTO strategy_votes (strategy_id, ip_hash, vote, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(strategy_id, ip_hash) DO UPDATE SET vote = excluded.vote, updated_at = excluded.updated_at`
+    ).bind(id, ipHash, vote, now, now).run();
+  }
+  return json({ ok: true, strategy_id: id, ...(await strategyVoteSummary(env, id, ipHash)) });
+}
+
 async function handleCommunityRegister(env, request, body) {
   const name = (body?.name || "").toString().trim().slice(0, 60);
   const description = (body?.description || "").toString().trim().slice(0, 500);
@@ -538,14 +576,27 @@ export default {
     }
 
     if (path === "/api/strategies" && request.method === "GET") {
+      const ipHash = await clientIpHash(request);
       const rows = await env.DB.prepare(
-        "SELECT id, name, body, created_at FROM strategies ORDER BY created_at DESC LIMIT 200"
-      ).all();
+        `SELECT s.id, s.name, s.body, s.created_at,
+           COALESCE(SUM(CASE WHEN v.vote = 1 THEN 1 ELSE 0 END), 0) AS upvotes,
+           COALESCE(SUM(CASE WHEN v.vote = -1 THEN 1 ELSE 0 END), 0) AS downvotes,
+           COALESCE(SUM(v.vote), 0) AS score,
+           COALESCE(MAX(CASE WHEN v.ip_hash = ? THEN v.vote ELSE 0 END), 0) AS my_vote
+         FROM strategies s LEFT JOIN strategy_votes v ON v.strategy_id = s.id
+         GROUP BY s.id ORDER BY s.created_at DESC LIMIT 200`
+      ).bind(ipHash).all();
       return json({ ok: true, strategies: rows.results });
     }
     if (path === "/api/strategies" && request.method === "POST") {
       const body = await readJson(request);
       return handleStrategiesPost(env, request, body);
+    }
+    {
+      const m = path.match(/^\/api\/strategies\/(\d+)\/vote$/);
+      if (m && request.method === "POST") {
+        return handleStrategyVote(env, request, m[1], await readJson(request));
+      }
     }
 
     if (path === "/api/community/agents/register" && request.method === "POST") {
@@ -600,6 +651,21 @@ export default {
       const owner = await requireOwner(request, env);
       if (!owner) return err(401, "verified owner identity required");
       return json({ ok: true, owner: { email: owner.email, subject: owner.subject } });
+    }
+    {
+      const m = path.match(/^\/api\/admin\/strategies\/(\d+)$/);
+      if (m && request.method === "DELETE") {
+        const owner = await requireOwner(request, env);
+        if (!owner) return err(401, "verified owner identity required");
+        const strategy = await env.DB.prepare("SELECT id, name FROM strategies WHERE id = ?").bind(Number(m[1])).first();
+        if (!strategy) return err(404, "strategy not found");
+        await env.DB.batch([
+          env.DB.prepare("DELETE FROM strategy_votes WHERE strategy_id = ?").bind(strategy.id),
+          env.DB.prepare("DELETE FROM strategies WHERE id = ?").bind(strategy.id),
+          auditOwnerStatement(env, owner, "strategy.delete", String(strategy.id), { name: strategy.name }),
+        ]);
+        return json({ ok: true, deleted: strategy.id });
+      }
     }
     if (path === "/api/admin/agents" && request.method === "POST") {
       const owner = await requireOwner(request, env);

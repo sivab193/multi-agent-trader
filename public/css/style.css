@@ -295,6 +295,10 @@ pre.dump {
 .tl .head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font: 12px var(--mono); color: var(--muted); }
 .tl .head b { color: var(--text); font-family: var(--sans); font-size: 14px; }
 .tl p { margin: 6px 0 0; color: var(--text2); max-width: 820px; white-space: pre-wrap; word-break: break-word; }
+.strategy-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 10px; }
+.vote-btn { padding: 5px 10px; font: 700 12px var(--mono); color: var(--muted); background: var(--panel2); border-color: var(--border2); }
+.vote-btn:hover, .vote-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.vote-score { color: var(--faint); font: 11px var(--mono); margin-right: auto; }
 
 /* prose (how it works) */
 .prose { max-width: 820px; }

@@ -149,6 +149,17 @@ CREATE TABLE IF NOT EXISTS strategies (
   created_at TEXT NOT NULL
 );
 
+-- One public vote per privacy-preserving visitor hash and strategy.
+CREATE TABLE IF NOT EXISTS strategy_votes (
+  strategy_id INTEGER NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
+  ip_hash     TEXT NOT NULL,
+  vote        INTEGER NOT NULL CHECK (vote IN (-1, 1)),
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL,
+  PRIMARY KEY (strategy_id, ip_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_strategy_votes_strategy ON strategy_votes(strategy_id);
+
 -- Atomic fixed-window counters for public and agent write endpoints.
 CREATE TABLE IF NOT EXISTS rate_limits (
   scope        TEXT NOT NULL,
